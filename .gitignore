@@ -1,49 +1,40 @@
-# History files
+# Ignore intermediate and output folder
+
+
+# R specific gitignores
+.Rprofile
 .Rhistory
-.Rapp.history
-
-# Session Data files
-.RData
-.RDataTmp
-
-# User-specific files
+.Rprofile
 .Ruserdata
+.DS_Store
+*.Rproj
+.Rproj.user
+desktop.ini
 
-# Example code in package build process
-*-Ex.R
+## ignore the renv initialization file
+initialize_renv.R
 
-# Output files from R CMD build
-/*.tar.gz
+## ignore filtered CLIF tables stored as Rdata
+*.RData
 
-# Output files from R CMD check
-/*.Rcheck/
+#ignore source CLIF_ files 
+CLIF_*.parquet
+CLIF_*.csv
+CLIF_*.fst
 
-# RStudio files
-.Rproj.user/
+#ignore intermediate files
+*.parquet
 
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
+#ignore the identifier app
+CLIF_cohort_identifier*
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
-.httr-oauth
+# ignore file used to initialize renv when creating the template
+initialize_renv.R
 
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
+# ignore filtered CLIF tables stored as Rdata
+*.RData
 
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
-
-# R Environment Variables
-.Renviron
-
-# pkgdown site
-docs/
-
-# translation temp files
-po/*~
-
-# RStudio Connect folder
-rsconnect/
+# ignore pdf reports and rendered html
+*.pdf
+*.html
+*.png

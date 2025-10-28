@@ -1,0 +1,590 @@
+---
+title: "01_valid_hosp_ASE"
+output: html_document
+---
+# Identify all valid hospitalizations for thresholds project 
+
+## Required libraries for all components of project:
+```{r}
+library(arrow)
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(patchwork)
+library(rlang)
+library(dcurves)
+library(gtsummary)
+library(broom)
+library(stringr)
+library(purrr)
+library(webshot2)
+
+```
+
+
+## Set up time frame of interest
+```{r}
+start_date <- ymd_hms("2024-01-01 00:00:01")
+end_date <- ymd_hms("2025-03-01 23:59:59") # Emory data is thru 03/01/2025
+start_year <- format(start_date, "%Y")
+end_year <- format(end_date, "%Y")
+
+```
+
+## Step 1: Filter hospitalizations for >18 and date range for encounters
+```{r}
+valid_hosp <- open_dataset(file.path(config$tables_path, "clif_hospitalization.parquet")) %>%
+  select(patient_id, hospitalization_id, admission_dttm, discharge_dttm, age_at_admission, discharge_category) %>% 
+  left_join(open_dataset(file.path(config$tables_path, "clif_patient.parquet")),
+            by = "patient_id") %>%
+  filter(age_at_admission >= 18,
+         admission_dttm >= start_date,
+         admission_dttm <= end_date) %>%
+  select(hospitalization_id, patient_id, admission_dttm, age_at_admission, discharge_dttm, discharge_category) %>%
+  collect()
+
+```
+
+## Step 2: Ensure at least one wards / icu logged location (avoiding ER only visits)
+```{r}
+valid_hosp_arrow <- as_arrow_table(valid_hosp)
+
+valid_hosp_admit <- valid_hosp_arrow %>%
+  left_join(open_dataset(file.path(config$tables_path, "clif_adt.parquet")), 
+            by = "hospitalization_id", relationship = "many-to-many") %>%
+  filter(location_category %in% c("ward", "icu")) %>%
+  collect() %>%
+  distinct(hospitalization_id, age_at_admission, admission_dttm, discharge_dttm, discharge_category)
+
+```
+
+## Step 3: WBC cleaning (may not be needed)
+```{r}
+labs_cleaned <- open_dataset(file.path(config$tables_path, "clif_labs.parquet"))%>%
+  filter(lab_category == "wbc") %>%
+  select(hospitalization_id, lab_order_dttm, lab_value) %>%
+  collect() %>%
+  mutate(lab_value = gsub("[<>]", "", lab_value)) %>%
+  filter(grepl("^\\s*-?\\d+(\\.\\d+)?\\s*$", lab_value)) %>%
+  mutate(lab_value = as.numeric(lab_value))
+
+```
+
+## Step 4: First WBC within 24 hrs - includes hardcoded WBC limits (outliers)
+```{r}
+first_wbc_recorded <- labs_cleaned %>%
+  inner_join(valid_hosp_admit, by = "hospitalization_id") %>%
+  mutate(start_window = admission_dttm - hours(24),
+         end_window = admission_dttm + hours(24)) %>%
+  filter(lab_order_dttm >= start_window & lab_order_dttm <= end_window) %>%
+  filter(lab_value <= 500) %>% 
+  group_by(hospitalization_id) %>%
+  slice_min(lab_order_dttm, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(hospitalization_id, wbc_recorded = lab_value)
+
+```
+
+## Step 5: Clean temp data - includes hardcoded temp limits (outliers)
+```{r}
+vitals_cleaned <- open_dataset(file.path(config$tables_path, "clif_vitals.parquet"))%>%
+  filter(vital_category == "temp_c") %>%
+  filter(vital_value >= 32 & vital_value <= 44) %>% 
+  select(hospitalization_id, recorded_dttm, vital_value) %>%
+  collect() %>%
+  mutate(vital_value = gsub("[<>]", "", vital_value)) %>%
+  filter(grepl("^\\s*-?\\d+(\\.\\d+)?\\s*$", vital_value)) %>%
+  mutate(vital_value = as.numeric(vital_value))
+
+```
+
+## Step 6: First temperature within 24 hrs
+```{r}
+first_temp_recorded <- vitals_cleaned %>%
+  select(hospitalization_id, recorded_dttm, vital_value) %>%
+  collect() %>%
+  inner_join(valid_hosp_admit, by = "hospitalization_id") %>%
+  mutate(start_window = admission_dttm - hours(24),
+         end_window = admission_dttm + hours(24)) %>%
+  filter(recorded_dttm >= start_window & recorded_dttm <= end_window) %>%
+  group_by(hospitalization_id) %>%
+  slice_min(recorded_dttm, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(hospitalization_id, temp_recorded = vital_value)
+
+```
+
+## Step 7: Combine criteria for full list
+```{r}
+all_qualified <- valid_hosp_admit %>%
+  inner_join(first_wbc_recorded, by = "hospitalization_id") %>%
+  inner_join(first_temp_recorded, by = "hospitalization_id") %>%
+  select(hospitalization_id, age_at_admission, admission_dttm, wbc_recorded, temp_recorded, discharge_category)
+
+```
+
+## Step 8: Saving down (optional)
+```{r}
+write_parquet(all_qualified, file.path(config$output_path, "intermediate", "all_qualified.parquet"))
+
+```
+
+## Step 9: Load
+```{r}
+all_qualified <- read_parquet(file.path(config$output_path, "intermediate", "all_qualified.parquet"))
+```
+
+
+# ============================================================================ #
+# ================================= ASE CODE ================================= #
+# ============================================================================ #
+
+## Identify patients meeting ASE Criteria
+
+## Blood culture preparation
+### Set up
+```{r}
+blood_cultures <- read_parquet(file.path(config$tables_path, "clif_microbiology_culture.parquet")) %>%
+  filter(fluid_category == "blood_buffy") %>%
+  select(hospitalization_id, order_dttm, fluid_category, organism_name) %>%
+  collect() 
+blood_cultures <- blood_cultures %>%
+  rename(blood_culture_order_time = order_dttm)
+
+```
+
+### Formatting check
+```{r}
+blood_cultures <- blood_cultures %>%
+  mutate(
+    blood_culture_order_time = str_trim(blood_culture_order_time),
+    blood_culture_order_time = na_if(blood_culture_order_time, ""),
+    blood_culture_order_time = ymd_hms(blood_culture_order_time, quiet = TRUE)
+  ) %>%
+  arrange(hospitalization_id, blood_culture_order_time)
+
+```
+
+### Join qualified hospitalizations from above
+```{r}
+blood_cultures <- blood_cultures %>%
+  arrange(hospitalization_id, blood_culture_order_time) %>%
+  group_by(hospitalization_id)
+
+blood_cultures_timing <- blood_cultures %>%
+ mutate(hospitalization_id = as.character(hospitalization_id)) %>%
+  inner_join(all_qualified %>% 
+               mutate(hospitalization_id = as.character(hospitalization_id)),
+               by = "hospitalization_id"
+             ) %>%
+  select(hospitalization_id, blood_culture_order_time, organism_name, admission_dttm, wbc_recorded, temp_recorded) %>%
+  collect()
+
+```
+
+### Looking for community acquired sepsis (BC within +/- 48hr of admission)
+```{r}
+blood_cultures_timing <- blood_cultures_timing %>%
+  mutate(bc_start_window = admission_dttm - hours(48),
+         bc_end_window = admission_dttm + hours(48)) %>%
+  filter(blood_culture_order_time >= bc_start_window & blood_culture_order_time <= bc_end_window) 
+
+```
+
+### Marking positive results (if any)
+```{r}
+all_blood_cultures <- blood_cultures_timing %>%
+  group_by(hospitalization_id, wbc_recorded, temp_recorded) %>%
+  summarize(
+    organism_category = ifelse(any(organism_name != "NA"), 1, 0), 
+    earliest_order_time = min(blood_culture_order_time, na.rm = TRUE), 
+    .groups = 'drop') 
+
+all_blood_cultures <- all_blood_cultures %>%
+  rename(blood_culture_order_time = earliest_order_time)
+
+```
+
+### Saving qualified blood cultures
+```{r}
+write_parquet(all_blood_cultures, file.path(config$output_path, "intermediate", "all_blood_cultures.parquet"))
+
+```
+
+## Identify ADULT SEPSIS EVENT per CDC Criteria
+## This code applies the [CDC adverse sepsis event defintion ](https://www.cdc.gov/sepsis/pdfs/sepsis-surveillance-toolkit-mar-2018_508.pdf) to CLIF
+## (Must include the 2 components of criteria A **AND** include one or more organ dysfunction listed among B criteria)
+
+## A. Presumed Infection (both 1 and 2 present)
+### A1: Blood cultures obtained (results do not matter)
+
+```{r}
+all_blood_cultures <- read_parquet(file.path(config$output_path, "intermediate", "all_blood_cultures.parquet"))
+
+all_blood_cultures <- all_blood_cultures %>%
+  left_join(all_qualified, by = "hospitalization_id") %>%
+  select(hospitalization_id, blood_culture_order_time, organism_category, admission_dttm) %>%
+  collect()
+
+```
+
+### A2: At least 4 Qualifying Antibiotic Days (QAD) ** Starting within +/- 48 hours of blood culture collection
+```{r}
+qualifying_antibiotic_days <- open_dataset(file.path(config$tables_path, "clif_medication_admin_intermittent.parquet")) %>%
+  filter(med_group == "CMS_sepsis_qualifying_antibiotics") %>%
+  select(hospitalization_id, med_group, med_name, admin_dttm) %>%
+  collect() 
+qualifying_antibiotic_days$admin_dttm <- ymd_hms(
+  qualifying_antibiotic_days$admin_dttm,
+  tz = "UTC"
+)
+
+qualifying_antibiotic_days <- qualifying_antibiotic_days %>%
+  left_join(
+    all_blood_cultures %>% select(hospitalization_id, blood_culture_order_time, admission_dttm), by = "hospitalization_id", relationship = "many-to-many") %>%
+  mutate(
+    # Calculate the difference in hours between antibiotic time and blood culture collection time
+    hour_diff = as.numeric(difftime(admin_dttm, blood_culture_order_time, units = "hours")),
+    # Define relative days based on hour difference
+    day = floor(hour_diff/24))%>%
+  arrange(hospitalization_id, blood_culture_order_time, hour_diff, day, admission_dttm, admin_dttm) %>%
+  select(hospitalization_id, blood_culture_order_time, admin_dttm, day, admission_dttm) %>%
+  filter(day >= -2 & day <= 6) 
+
+total_QAD_df <- qualifying_antibiotic_days %>%
+  distinct(hospitalization_id, day) %>%
+  arrange(hospitalization_id, day) %>%
+  group_by(hospitalization_id) %>%
+  mutate(
+    diff_day = day - lag(day, default = first(day) - 1),
+    group_consec = cumsum(diff_day != 1)
+  ) %>%
+  group_by(hospitalization_id, group_consec) %>%
+  summarise(
+    run_length = n(),              # number of days in this run
+    end_day    = max(day),         # last day of this run
+    .groups = "drop_last"
+  ) %>%
+  group_by(hospitalization_id) %>%
+  arrange(desc(run_length), end_day) %>%   # order by longest run, then later end day
+  slice(1) %>%                             # keep the "best" run
+  ungroup() %>%
+  rename(total_QAD = run_length)%>%
+  collect()
+
+
+QAD_latest_admin <- qualifying_antibiotic_days %>%
+  # bring in total_QAD and end_day for each hospitalization
+  left_join(total_QAD_df %>% select(hospitalization_id, total_QAD, end_day), by = "hospitalization_id") %>%
+  # restrict to rows that are on the "end_day" of the longest run
+  filter(day == end_day) %>%
+  group_by(hospitalization_id) %>%
+  # pick the latest admin_dttm on that day
+  slice_max(admin_dttm, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(hospitalization_id, blood_culture_order_time, admission_dttm,
+         day, admin_dttm, total_QAD)
+
+QAD_censoring_time <- open_dataset(file.path(config$tables_path, "clif_hospitalization.parquet")) %>%
+  select(hospitalization_id, patient_id, admission_dttm, discharge_dttm, discharge_category) %>%
+  left_join(
+    open_dataset(file.path(config$tables_path, "clif_patient.parquet")) %>%
+      select(patient_id, death_dttm),
+    by = "patient_id"
+  ) %>% collect() %>% 
+  mutate(end_time = pmin(discharge_dttm, death_dttm, na.rm = TRUE),
+         QAD_censoring_time = case_when(
+           death_dttm == end_time ~ end_time,
+           discharge_category %in% c("Expired", "Acute Care Hospital", "Hospice") ~ end_time
+         )
+  ) %>%
+  select(hospitalization_id, QAD_censoring_time, admission_dttm, discharge_dttm, discharge_category)
+
+```
+
+## Determining Presumed Infection based on QAD and death timing
+```{r}
+presumed_infection <- QAD_latest_admin %>%
+  left_join(QAD_censoring_time %>% select(hospitalization_id, QAD_censoring_time), by = "hospitalization_id") %>%
+  mutate(
+    presumed_infection = case_when(
+      total_QAD >= 4 ~1,
+      total_QAD >= 1 & QAD_censoring_time < (admin_dttm + days(1)) ~ 1,
+      TRUE ~ 0
+    )
+  ) %>%
+  filter(presumed_infection == 1) %>%
+  select(hospitalization_id, time = blood_culture_order_time, admission_dttm, total_QAD) %>%
+  arrange(hospitalization_id, time, admission_dttm) 
+
+```
+
+# Saving presumed_infection hospitalization_ids
+```{r}
+write_parquet(presumed_infection, file.path(config$output_path, "intermediate", "presumed_infection.parquet"))
+
+```
+
+#**AND**
+
+## B. Organ Dysfunction (at LEAST one of the following criteria met w/in +/- 48hr from blood culture)
+
+### Initation of new vasopressor (norepi, dopamine, epi, phenylephrine, vaso)
+#### Step 1: Load and filter continuous med admin data, collect to memory
+```{r}
+long_sepsis_vasoactives <- open_dataset(file.path(config$tables_path,"clif_medication_admin_continuous.parquet")) %>%
+  filter(med_group == "vasoactives" & med_dose > 0) %>%
+  select(hospitalization_id, admin_dttm, med_group) %>%
+  collect()
+long_sepsis_vasoactives <- long_sepsis_vasoactives %>%
+  rename(time = admin_dttm) %>%
+  collect()
+```
+
+#### Step 2: Join with presumed infection data and perform date arithmetic
+```{r}
+long_sepsis_vasoactives <- long_sepsis_vasoactives %>%
+  left_join(presumed_infection %>% select(hospitalization_id, presumed_infection_dttm = time, admission_dttm), 
+            by = "hospitalization_id", relationship = "many-to-many") %>%
+  mutate(qualifying_vasoactive_start = ifelse(
+    time > (presumed_infection_dttm - lubridate::days(2)) & 
+      time < (presumed_infection_dttm + lubridate::days(2)), 
+    1, 0
+  )) %>%
+  select(hospitalization_id, time, presumed_infection_dttm, med_group, qualifying_vasoactive_start, admission_dttm)
+
+```
+
+#### Vasoactives save
+```{r}
+write_parquet(long_sepsis_vasoactives, file.path(config$output_path, "intermediate", "long_vasoactives.parquet"))
+```
+
+### Initiation of invasive mechanical ventilation
+#### Step 1: Load and filter respiratory support data for IMV, then collect into memory
+```{r}
+long_sepsis_IMV <- open_dataset(file.path(config$tables_path, "clif_respiratory_support.parquet")) %>%
+  filter(device_category == "IMV") %>%
+  select(hospitalization_id, recorded_dttm, device_category) %>%
+  rename(time = recorded_dttm) %>%
+  collect()
+
+```
+
+#### Step 2: Convert hospitalization_id to character and join with presumed infection data
+```{r}
+long_sepsis_IMV <- long_sepsis_IMV %>%
+  mutate(hospitalization_id = as.character(hospitalization_id)) %>%
+  left_join(presumed_infection %>% select(hospitalization_id, presumed_infection_dttm = time, admission_dttm), 
+            by = "hospitalization_id", relationship = "many-to-many") %>%
+  mutate(qualifying_vent_start = ifelse(
+    time > (presumed_infection_dttm - lubridate::days(2)) & 
+      time < (presumed_infection_dttm + lubridate::days(2)), 
+    1, 0
+  )) %>%
+  select(hospitalization_id, time, presumed_infection_dttm, device_category, qualifying_vent_start, admission_dttm)
+
+```
+
+#### IMV save
+```{r}
+write_parquet(long_sepsis_IMV, file.path(config$output_path,"intermediate", "long_sepsis_IMV.parquet"))
+
+```
+
+### LAB CRITERIA (Cr, Platelets, Bilirubin, Lactate)
+### Load dataset
+```{r}
+long_sepsis_labs <- open_dataset(file.path(config$tables_path, "clif_labs.parquet")) %>%
+  filter(lab_category %in% c("creatinine", "bilirubin_total", "platelet_count", "lactate")) %>%
+  select(hospitalization_id, lab_category, lab_value_numeric, lab_result_dttm) %>%
+  rename(time = lab_result_dttm) %>%
+  collect() %>%
+  distinct()
+
+```
+
+#### --- Determine baselines --- 
+```{r}
+baseline_creatinine <- long_sepsis_labs %>%
+  filter(lab_category == "creatinine") %>%
+  filter(lab_value_numeric <= 20) %>% #outlier handling
+  group_by(hospitalization_id) %>%
+  slice_min(lab_value_numeric, with_ties = FALSE) %>% 
+  ungroup() %>%
+  select(hospitalization_id, baseline_creatinine = lab_value_numeric)
+
+baseline_bilirubin <- long_sepsis_labs %>%
+  filter(lab_category == "bilirubin_total") %>%
+  filter(lab_value_numeric <= 80) %>% #outlier handling
+group_by(hospitalization_id) %>%
+  slice_min(lab_value_numeric, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(hospitalization_id, baseline_bilirubin_total = lab_value_numeric)
+
+baseline_platelet <- long_sepsis_labs %>%
+  filter(lab_category == "platelet_count") %>%
+  filter(lab_value_numeric <= 2000) %>% #outlier handling
+  group_by(hospitalization_id) %>%
+  arrange(time) %>%
+  filter(row_number() == 1) %>%
+  select(hospitalization_id, baseline_platelet_count = lab_value_numeric) %>%
+  filter(baseline_platelet_count >= 100)
+
+baseline_lactate <- long_sepsis_labs %>% 
+  filter(lab_category == "lactate") %>% 
+  filter(lab_value_numeric <= 30) %>% #outlier handling
+  group_by(hospitalization_id) %>% 
+  slice_max(lab_value_numeric, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  select(hospitalization_id, baseline_lactate = lab_value_numeric)
+
+```
+
+#### --- Join and caculate flags --- 
+```{r} 
+long_sepsis_labs_w_sepsis_flags <- long_sepsis_labs %>%
+  mutate(hospitalization_id = as.character(hospitalization_id)) %>%
+  left_join(baseline_creatinine, by = "hospitalization_id") %>%
+  left_join(baseline_bilirubin, by = "hospitalization_id") %>%
+  left_join(baseline_platelet, by = "hospitalization_id") %>%
+  left_join(baseline_lactate, by = "hospitalization_id") %>%
+  mutate(
+    # Creatinine doubling
+    creatinine_change = ifelse(lab_category == "creatinine", lab_value_numeric / baseline_creatinine, NA),
+    aki = ifelse(creatinine_change >= 2, 1, 0),
+    
+    # Bilirubin ≥2.0 and doubled
+    bilirubin_change = ifelse(lab_category == "bilirubin_total", lab_value_numeric / baseline_bilirubin_total, NA),
+    hyperbilirubinemia = ifelse(lab_category == "bilirubin_total" & lab_value_numeric >= 2 & bilirubin_change >= 2, 1, 0),
+    
+    # Platelet <100 and ≥50% decline
+    platelet_change = ifelse(lab_category == "platelet_count", lab_value_numeric / baseline_platelet_count, NA),
+    thrombocytopenia = ifelse(lab_category == "platelet_count" & lab_value_numeric < 100 & platelet_change <= 0.5, 1, 0),
+    
+    # Lactate ≥2
+    elevated_lactate = ifelse(lab_category == "lactate" & lab_value_numeric >= 2, 1, 0)
+  ) %>%
+  left_join(presumed_infection %>% 
+              select(hospitalization_id, presumed_infection_dttm = time, admission_dttm), 
+            by = "hospitalization_id", relationship = "many-to-many") %>%
+  mutate(
+    qualifying_aki = ifelse(aki == 1 & time > presumed_infection_dttm - days(2) & time < presumed_infection_dttm + days(2), 1, 0),
+    qualifying_hyperbilirubinemia = ifelse(hyperbilirubinemia == 1 & time > presumed_infection_dttm - days(2) & time < presumed_infection_dttm + days(2), 1, 0),
+    qualifying_thrombocytopenia = ifelse(thrombocytopenia == 1 & time > presumed_infection_dttm - days(2) & time < presumed_infection_dttm + days(2), 1, 0),
+    qualifying_lactate = ifelse(elevated_lactate == 1 & time > presumed_infection_dttm - days(2) & time < presumed_infection_dttm + days(2), 1, 0)
+  )
+
+```
+
+
+#### Save file
+```{r}
+write_parquet(long_sepsis_labs_w_sepsis_flags, 
+              file.path(config$output_path, "intermediate", "long_sepsis_labs_w_sepsis_flags.parquet"))
+
+```
+
+### Wide format for sepsis evaluation for meeting part B definitions 
+```{r}
+sepsis_times <- long_sepsis_labs_w_sepsis_flags %>%
+  select(hospitalization_id, time, starts_with("qualifying")) %>% 
+  pivot_longer(cols = starts_with("qualifying"), names_prefix = "qualifying_", names_to = "sepsis_criteria") %>%
+  filter(value == 1) %>%
+  select(-value) %>%
+  rbind(
+    long_sepsis_vasoactives %>%
+      select(hospitalization_id, time, qualifying_vasoactive_start) %>%
+      filter(qualifying_vasoactive_start == 1) %>%
+      mutate(sepsis_criteria = "vasopressor") %>%
+      select(-qualifying_vasoactive_start)
+  ) %>%
+  rbind(
+    long_sepsis_IMV %>%
+      select(hospitalization_id, time, qualifying_vent_start) %>%
+      filter(qualifying_vent_start == 1) %>%
+      mutate(sepsis_criteria = "invasive mechanical ventilation") %>% 
+      select(-qualifying_vent_start)
+  ) %>%
+  filter(!is.na(time)) %>%
+  group_by(hospitalization_id) %>%
+  filter(any(!is.na(time))) %>%  # Exclude groups where all time values are NA
+  arrange(time) %>%
+  mutate(
+    first_sepsis_time = min(time),
+    first_sepsis_criteria = ifelse(time == first_sepsis_time, sepsis_criteria, NA)
+  ) %>%
+  distinct()
+
+first_sepsis_times <- sepsis_times %>%
+  group_by(hospitalization_id, sepsis_criteria) %>%
+  arrange(hospitalization_id, sepsis_criteria, time) %>%
+  filter(row_number() == 1)
+
+sepsis_case_id <- first_sepsis_times %>%
+  pull(hospitalization_id) %>% unique()
+
+# Write out sepsis summary dataset 
+wide_sepsis_times <- first_sepsis_times %>%
+  select(-first_sepsis_time, - first_sepsis_criteria) %>%
+  pivot_wider(names_from = "sepsis_criteria", values_from = "time")
+
+
+```
+
+### Save cases
+```{r}
+write_parquet(wide_sepsis_times, file.path(config$output_path, "intermediate", "all_ase_cases.parquet"))
+
+```
+
+### Create all ASE cases 
+```{r}
+all_ase_cases <- read_parquet(file.path(config$output_path,"intermediate", "all_ase_cases.parquet"))
+
+all_ase_cases <- all_ase_cases %>%
+  mutate(ase_flag = ifelse(hospitalization_id != "", 1, 0))
+
+```
+
+### add the ASE flags into the all_qualified data 
+```{r}
+all_qualified <- all_qualified %>%
+  left_join(all_ase_cases %>% select(hospitalization_id, ase_flag), by = "hospitalization_id") %>%
+  mutate(
+    ase_flag = case_when(
+      is.na(ase_flag) ~0, 
+      TRUE ~ as.numeric(as.character(ase_flag))
+    )
+  )
+
+```
+
+# ============================================================================ #
+# ========================== Creating Master List ============================ #
+# ============================================================================ #
+
+## Creating presumed infection flag (may or may not be used in analysis)
+```{r}
+presumed_infection_cases <- open_dataset(file.path(config$output_path, "intermediate", "presumed_infection.parquet")) %>%
+  mutate(infxn_flag = ifelse(hospitalization_id != 0, 1, 0))%>%
+  collect()
+
+presumed_infection_cases <- all_qualified %>%
+  left_join(presumed_infection_cases %>% select(hospitalization_id, infxn_flag), by = "hospitalization_id") %>%
+  mutate(presumed_flag = ifelse(is.na(infxn_flag), 0, 1)) %>%
+  select(hospitalization_id, wbc_recorded, temp_recorded, presumed_flag, admission_dttm)
+
+```
+
+## Creating Master List
+```{r}
+master_list <- all_qualified %>%
+  inner_join(presumed_infection_cases %>% select(hospitalization_id, presumed_flag), by ="hospitalization_id") %>%
+  select(hospitalization_id, age_at_admission, admission_dttm, wbc_recorded, temp_recorded, ase_flag, presumed_flag)
+
+```
+
+

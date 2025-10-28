@@ -1,0 +1,193 @@
+---
+title: "Youden Index Heat Maps - Temp and WBC"
+output: html_notebook
+---
+  
+# ================================================================
+# ------------------ DO NOT EDIT THIS FUNCTION -------------------
+# ================================================================
+```{r}
+run_threshold_analysis <- function(data, predictor, flag, 
+                                   lower_seq, upper_seq, name
+                                   ) {
+  # ---- Helper: Youden ----
+  calc_metrics_youden <- function(data, predictor, flag, lower, upper, name) {
+    pred_vals <- data[[predictor]]
+    flag_vals <- data[[flag]]
+    
+    pred <- (pred_vals < lower | pred_vals > upper)
+    
+    TP <- sum(pred & flag_vals == 1, na.rm = TRUE)
+    TN <- sum(!pred & flag_vals == 0, na.rm = TRUE)
+    FP <- sum(pred & flag_vals == 0, na.rm = TRUE)
+    FN <- sum(!pred & flag_vals == 1, na.rm = TRUE)
+    
+    sensitivity <- ifelse((TP + FN) > 0, TP / (TP + FN), NA)
+    specificity <- ifelse((TN + FP) > 0, TN / (TN + FP), NA)
+    youden <- sensitivity + specificity - 1
+    
+    return(c(sensitivity = sensitivity,
+             specificity = specificity,
+             youden = youden))
+  }
+  
+  # ---- Grid ----
+  grid <- expand.grid(lower = lower_seq, upper = upper_seq) %>%
+    filter(lower < upper)
+  
+  # ---- Youden ----
+  metrics_y <- t(mapply(
+    FUN = calc_metrics_youden,
+    lower = grid$lower,
+    upper = grid$upper,
+    MoreArgs = list(data = data, predictor = predictor, flag = flag)
+  ))
+  metrics_y_df <- cbind(grid, as.data.frame(metrics_y))
+  
+  top10_y <- metrics_y_df %>% arrange(desc(youden)) %>% slice_head(n = 10)
+  best_y <- top10_y[1, ]
+  
+  p_youden <- ggplot(metrics_y_df, aes(x = lower, y = upper, fill = youden)) +
+    geom_tile() +
+    geom_point(data = best_y, aes(x = lower, y = upper),
+               color = "black", size = 3, shape = 21, stroke = 1.2) +
+    geom_text(data = best_y,
+              aes(x = lower, y = upper,
+                  label = sprintf("Best: %.2f / %.2f\nYouden=%.3f",
+                                  lower, upper, youden)),
+              vjust = -1, color = "black", fontface = "bold") +
+    scale_fill_viridis_c(option = "magma", na.value = "grey80") +
+    labs(
+      title = paste0("Youden Index Heatmap for ", name, " Thresholds"),
+      x = paste0("Lower ", name, " Bound"),
+      y = paste0("Upper ", name, " Bound"),
+      fill = "Youden Index"
+    ) +
+    theme_minimal()
+  
+  # ---- Reference Ranges (accepted thresholds) ----
+  if (predictor == "temp_recorded") {
+    ref_ranges <- data.frame(lower = 36, upper = 38)
+  } else if (predictor == "wbc_recorded") {
+    ref_ranges <- data.frame(lower = 4, upper = 12)
+  } else {
+    ref_ranges <- NULL
+  }
+  
+  # Extract values at reference thresholds
+  if (!is.null(ref_ranges)) {
+    ref_y <- metrics_y_df %>%
+      filter(abs(lower - ref_ranges$lower) < 1e-6,
+             abs(upper - ref_ranges$upper) < 1e-6)
+    
+    if (nrow(ref_y) > 0) {
+      p_youden <- p_youden +
+        geom_point(data = ref_ranges, aes(x = lower, y = upper),
+                   color = "blue", size = 3, shape = 2, inherit.aes = FALSE) +
+        geom_text(data = ref_y,
+                  aes(x = lower, y = upper,
+                      label = sprintf("Ref: %.3f", youden)),
+                  vjust = -1, color = "blue", fontface = "italic",
+                  inherit.aes = FALSE)
+    }
+    
+    
+  }
+  
+  
+  # ---- Return ----
+  return(list(
+    youden_results      = metrics_y_df,
+    top10_youden        = top10_y,
+    plot_youden         = p_youden
+  ))
+}
+
+```
+
+# ================================================================
+# ------------------------- TEMPERATURE --------------------------
+# ================================================================
+```{r}
+DATA_SOURCE <- master_list      # <- dataset to use
+PREDICTOR   <- "temp_recorded"    # <- column to threshold
+FLAG        <- "ase_flag"         # <- outcome column (1/0)
+NAME        <- "Temperature"
+
+LOWER_SEQ   <- seq(35, 37, by = 0.1)  # lower thresholds
+UPPER_SEQ   <- seq(37, 39, by = 0.1)  # upper thresholds
+
+
+```
+
+
+# ================================================================
+# ----------------------- TEMP ANALYSIS --------------------------
+# ================================================================
+```{r}
+results_temp <- run_threshold_analysis(
+  data       = DATA_SOURCE,
+  predictor  = PREDICTOR,
+  flag       = FLAG,
+  lower_seq  = LOWER_SEQ,
+  upper_seq  = UPPER_SEQ,
+  name       = NAME
+)
+
+# Show plots
+print(results_temp$plot_youden)
+
+```
+
+# Save Output - TEMPERATURE
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "heatmap_temp_", Sys.Date(),".png")),
+  plot = results_temp$plot_youden,
+  width = 7, height = 5, dpi = 300
+)
+```
+
+
+# ================================================================
+# ---------------------- WHITE BLOOD CELL ------------------------
+# ================================================================
+```{r}
+DATA_SOURCE <- master_list      # <- dataset to use
+PREDICTOR   <- "wbc_recorded"    # <- column to threshold
+FLAG        <- "ase_flag"         # <- outcome column (1/0)
+NAME        <- "WBC"
+
+LOWER_SEQ   <- seq(1, 5, by = 0.1)  # lower thresholds
+UPPER_SEQ   <- seq(10, 18, by = 0.1)  # upper thresholds
+
+
+```
+
+# ================================================================
+# ----------------------- WBC ANALYSIS ---------------------------
+# ================================================================
+```{r}
+results_wbc <- run_threshold_analysis(
+  data       = DATA_SOURCE,
+  predictor  = PREDICTOR,
+  flag       = FLAG,
+  lower_seq  = LOWER_SEQ,
+  upper_seq  = UPPER_SEQ,
+  name       = NAME
+)
+
+# Show plots
+print(results_wbc$plot_youden)
+
+```
+
+## Save Output - WBC
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "heatmap_wbc_", Sys.Date(),".png")),
+  plot = results_wbc$plot_youden,
+  width = 7, height = 5, dpi = 300
+)
+```
+

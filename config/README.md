@@ -1,0 +1,1 @@
+Edit the config_template.json to config.json

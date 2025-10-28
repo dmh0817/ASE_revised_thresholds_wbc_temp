@@ -1,0 +1,313 @@
+---
+title: "Stepwise Odds Ratio - Temp and WBC"
+output: html_notebook
+---
+
+# ========================== TEMPERATURE STEPWISE OR ========================= #  
+
+# ---- Function to compute Odds Ratio ----
+```{r}
+calc_or_temp <- function(cut, direction = c("forward","reverse"), flag_var = "ase_flag") {
+  direction <- match.arg(direction)
+  
+  if (direction == "forward") {
+    # Exposed = >cut ; Reference = 36–cut
+    data_cut <- master_list %>%
+      mutate(group = case_when(
+        temp_recorded > cut ~ paste0(">", cut),
+        temp_recorded >= 36 & temp_recorded <= cut ~ paste0("36-", cut),
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(group), .data[[flag_var]] %in% c(0,1))
+    
+    tab <- table(
+      factor(data_cut$group, levels = c(paste0(">", cut), paste0("36-", cut))),
+      factor(data_cut[[flag_var]], levels = c(0,1))
+    )
+    
+    exp_label <- paste0(">", cut)
+    ref_label <- paste0("36-", cut)
+    dir_label <- "Forward (>cut vs 36–cut)"
+    
+  } else {
+    # Exposed = <cut ; Reference = cut–37
+    data_cut <- master_list %>%
+      mutate(group = case_when(
+        temp_recorded < cut ~ paste0("<", cut),
+        temp_recorded >= cut & temp_recorded <= 37 ~ paste0(cut, "-37"),
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(group), .data[[flag_var]] %in% c(0,1))
+    
+    tab <- table(
+      factor(data_cut$group, levels = c(paste0("<", cut), paste0(cut, "-37"))),
+      factor(data_cut[[flag_var]], levels = c(0,1))
+    )
+    
+    exp_label <- paste0("<", cut)
+    ref_label <- paste0(cut, "-37")
+    dir_label <- "Reverse (<cut vs cut–37)"
+  }
+  
+  # ---- 2x2 OR calculation ----
+  a <- tab[1,2]; b <- tab[1,1]
+  c <- tab[2,2]; d <- tab[2,1]
+  if (any(c(a,b,c,d) == 0)) { a<-a+0.5; b<-b+0.5; c<-c+0.5; d<-d+0.5 }
+  
+  or <- (a/b) / (c/d)
+  se <- sqrt(1/a + 1/b + 1/c + 1/d)
+  
+  tibble(
+    cutoff = cut,
+    OR = or,
+    CI_low = exp(log(or) - 1.96*se),
+    CI_high = exp(log(or) + 1.96*se),
+    exposed_group = exp_label,
+    reference_group = ref_label,
+    direction = dir_label
+  )
+}
+```
+
+# ---- Cutoff definitions for temp ----
+```{r}
+cutoffs_forward_temp <- seq(37, 39, by = 0.1)
+cutoffs_reverse_temp <- seq(37, 35, by = -0.1)
+
+```
+
+
+# ---- Run for ase_flag for temp ----
+```{r}
+or_all <- bind_rows(
+  map_dfr(cutoffs_forward_temp, calc_or_temp, direction = "forward", flag_var = "ase_flag"),
+  map_dfr(cutoffs_reverse_temp, calc_or_temp, direction = "reverse", flag_var = "ase_flag")
+)
+
+```
+
+# ---- Split for temp ----
+```{r}
+or_forward_temp <- or_all %>% filter(direction == "Forward (>cut vs 36–cut)")
+or_reverse_temp <- or_all %>% filter(direction == "Reverse (<cut vs cut–37)")
+
+```
+
+# ---- Axis breaks ----
+```{r}
+breaks_fwd_temp <- seq(floor(min(or_forward_temp$cutoff, na.rm = TRUE)),
+                  ceiling(max(or_forward_temp$cutoff, na.rm = TRUE)), by = 0.5)
+breaks_rev_temp <- seq(floor(min(or_reverse_temp$cutoff, na.rm = TRUE)),
+                  ceiling(max(or_reverse_temp$cutoff, na.rm = TRUE)), by = 0.5)
+
+```
+
+# ---- Forward plot ----
+```{r}
+p_fwd_temp <- ggplot(or_forward_temp, aes(x = cutoff, y = OR)) +
+  geom_line(color = "darkred") +
+  geom_point(size = 1.2, color = "darkred") +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high),
+                width = 0.05, alpha = 0.4, color = "darkred") +
+  scale_y_log10() +
+  scale_x_continuous(breaks = breaks_fwd_temp) +
+  labs(
+    title = "Forward: OR by Temperature",
+    x = expression("Temperature cutoff (" * degree * "C)"),
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_minimal()
+
+#  (>cut vs 36–cut)
+```
+
+# ---- Reverse plot ----
+```{r}
+p_rev_temp <- ggplot(or_reverse_temp, aes(x = cutoff, y = OR)) +
+  geom_line(color = "darkred") +
+  geom_point(size = 1.2, color = "darkred") +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high),
+                width = 0.05, alpha = 0.4, color = "darkred") +
+  scale_y_log10() +
+  scale_x_continuous(breaks = breaks_rev_temp) +
+  labs(
+    title = "Reverse: OR by Temperature",
+    x = expression("Temperature cutoff (" * degree * "C)"),
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_minimal()
+
+# (<cut vs cut–37)
+```
+
+# ---- Combine for TEMP ----
+```{r}
+p_comb_temp <- p_rev_temp + p_fwd_temp
+print(p_comb_temp)
+```
+
+# Save Output - TEMPERATURE
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "stepwiseOR_temp", Sys.Date(),".png")),
+  plot = p_comb_temp,
+  width = 7, height = 5, dpi = 300
+)
+```
+
+
+
+# ========================== WHITE COUNT STEPWISE OR ========================= #  
+
+# ---- Function to compute OR for WBC ----
+```{r}
+calc_or_wbc <- function(cut, direction = c("forward","reverse"), flag_var = "ase_flag") {
+  direction <- match.arg(direction)
+  
+  if (direction == "forward") {
+    # Exposed = >cut ; Reference = 4–cut
+    data_cut <- master_list %>%
+      mutate(group = case_when(
+        wbc_recorded > cut ~ paste0(">", cut),
+        wbc_recorded >= 4 & wbc_recorded <= cut ~ paste0("4-", cut),
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(group), .data[[flag_var]] %in% c(0,1))
+    
+    tab <- table(
+      factor(data_cut$group, levels = c(paste0(">", cut), paste0("4-", cut))),
+      factor(data_cut[[flag_var]], levels = c(0,1))
+    )
+    
+    exp_label <- paste0(">", cut)
+    ref_label <- paste0("4-", cut)
+    dir_label <- "Forward (>cut vs 4–cut)"
+    
+  } else {
+    # Exposed = <cut ; Reference = cut–12
+    data_cut <- master_list %>%
+      mutate(group = case_when(
+        wbc_recorded < cut ~ paste0("<", cut),
+        wbc_recorded >= cut & wbc_recorded <= 12 ~ paste0(cut, "-12"),
+        TRUE ~ NA_character_
+      )) %>%
+      filter(!is.na(group), .data[[flag_var]] %in% c(0,1))
+    
+    tab <- table(
+      factor(data_cut$group, levels = c(paste0("<", cut), paste0(cut, "-12"))),
+      factor(data_cut[[flag_var]], levels = c(0,1))
+    )
+    
+    exp_label <- paste0("<", cut)
+    ref_label <- paste0(cut, "-12")
+    dir_label <- "Reverse (<cut vs cut–12)"
+  }
+  
+  # 2x2 counts
+  a <- tab[1,2]; b <- tab[1,1]
+  c <- tab[2,2]; d <- tab[2,1]
+  if (any(c(a,b,c,d) == 0)) { a<-a+0.5; b<-b+0.5; c<-c+0.5; d<-d+0.5 }
+  
+  or <- (a/b) / (c/d)
+  se <- sqrt(1/a + 1/b + 1/c + 1/d)
+  
+  tibble(
+    cutoff = cut,
+    OR = or,
+    CI_low = exp(log(or) - 1.96*se),
+    CI_high = exp(log(or) + 1.96*se),
+    exposed_group = exp_label,
+    reference_group = ref_label,
+    direction = dir_label
+  )
+}
+
+```
+
+# ---- Run for ase_flag  ----
+```{r}
+cutoffs_forward_wbc <- seq(8, 18, by = 0.1)
+cutoffs_reverse_wbc <- seq(7.9, 1, by = -0.1)
+```
+
+# run for all 
+```{r}
+or_all_wbc <- bind_rows(
+  map_dfr(cutoffs_forward_wbc, calc_or_wbc, direction = "forward", flag_var = "ase_flag"),
+  map_dfr(cutoffs_reverse_wbc, calc_or_wbc, direction = "reverse", flag_var = "ase_flag")
+)
+  
+```
+
+# ---- Split ----
+```{r}
+or_forward_wbc <- or_all_wbc %>% filter(direction == "Forward (>cut vs 4–cut)")
+or_reverse_wbc <- or_all_wbc %>% filter(direction == "Reverse (<cut vs cut–12)")
+```
+
+
+
+# ---- Axis breaks ----
+```{r}
+breaks_fwd_wbc <- seq(floor(min(or_forward_wbc$cutoff, na.rm = TRUE)),
+                      ceiling(max(or_forward_wbc$cutoff, na.rm = TRUE)), by = 0.5)
+breaks_rev_wbc <- seq(floor(min(or_reverse_wbc$cutoff, na.rm = TRUE)),
+                      ceiling(max(or_reverse_wbc$cutoff, na.rm = TRUE)), by = 0.5)
+```
+
+
+
+# ---- Forward plot ----
+```{r}
+p_fwd_wbc <- ggplot(or_forward_wbc, aes(x = cutoff, y = OR)) +
+  geom_line(color = "navy") +
+  geom_point(size = 1.2, color = "navy") +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high),
+                width = 0.05, alpha = 0.4, color = "navy") +
+  scale_y_log10() +
+  scale_x_continuous(breaks = breaks_fwd_wbc) +
+  labs(
+    title = "Forward: OR by WBC",
+    x = "WBC cutoff (×10⁹/L)",
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#  (>cut vs 4–cut)
+```
+
+# ---- Reverse plot ----
+```{r}
+p_rev_wbc <- ggplot(or_reverse_wbc, aes(x = cutoff, y = OR)) +
+  geom_line(color = "navy") +
+  geom_point(size = 1.2, color = "navy") +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high),
+                width = 0.05, alpha = 0.4, color = "navy") +
+  scale_y_log10() +
+  scale_x_continuous(breaks = breaks_rev_wbc) +
+  labs(
+    title = "Reverse: OR by WBC",
+    x = "WBC cutoff (×10⁹/L)",
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_minimal()
+
+#  (<cut vs cut–12)
+```
+
+# ---- Combine for WBC ----
+```{r}
+p_comb_wbc <- p_rev_wbc + p_fwd_wbc
+print(p_comb_wbc)
+```
+
+# Save Output - WBC
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "stepwiseOR_wbc_", Sys.Date(),".png")),
+  plot = p_comb_wbc,
+  width = 7, height = 5, dpi = 300
+)
+```
+

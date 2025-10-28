@@ -1,0 +1,1 @@
+Folder for intermediate files (should not be uploaded / shared)

@@ -1,0 +1,8 @@
+{
+  "site_name": "sitename",
+  "output_path": "path_to_project",
+  "tables_path": "path_to_datatables",
+  "file_type": "parquet"
+}
+
+

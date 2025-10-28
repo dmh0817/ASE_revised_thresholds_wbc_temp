@@ -1,0 +1,259 @@
+---
+title: "Histograms- Temperature and WBC"
+output: html_notebook
+---
+
+## --- Set Up: Set target percentage of smoothed line intercept ---
+```{r}
+target_pct <- 10  # keep at 10 
+
+```
+
+
+# =========================== TEMPERATURE HISTOGRAM ========================== #  
+
+## --- Step 1: Define bin labels ---
+```{r}
+bin_labels_temp <- paste0("(", seq(35, 39.9, by = 0.1), "-", seq(35.1, 40, by = 0.1), "]")
+all_bins <- c("(under 35)", bin_labels_temp, "(40+)")
+```
+
+## --- Step 2: Assign bins ---
+```{r}
+master_list_bins <- master_list %>%
+  mutate(
+    temp_bin = case_when(
+      !is.na(temp_recorded) & temp_recorded < 35 ~ "(under 35)",
+      !is.na(temp_recorded) & temp_recorded > 40 ~ "(40+)",
+      TRUE ~ as.character(cut(
+        temp_recorded,
+        breaks = seq(35, 40, by = 0.1),
+        include.lowest = TRUE,
+        right = TRUE,
+        labels = bin_labels_temp
+      ))
+    ),
+    temp_bin = factor(temp_bin, levels = all_bins)
+  )
+
+```
+
+## --- Step 3: Aggregate ---
+```{r}
+plot_data_temp <- master_list_bins %>%
+  filter(!is.na(temp_bin)) %>%
+  group_by(temp_bin) %>%
+  summarise(
+    n_total = n(),
+    n_sepsis = sum(ase_flag == 1, na.rm = TRUE),
+    percent_sepsis = 100 * n_sepsis / n_total,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    left = as.numeric(str_extract(temp_bin, "(?<=\\()[0-9.]+")),
+    right = as.numeric(str_extract(temp_bin, "(?<=-)[0-9.]+")),
+    bin_mid = case_when(
+      temp_bin == "(under 35)" ~ 34.9,       # placeholder to align left
+      !is.na(left) & !is.na(right) ~ (left + right) / 2,
+      temp_bin == "(40+)" ~ 40.1,            # placeholder to align right
+      TRUE ~ NA_real_
+    )
+  )
+```
+
+## --- Step 4: Smooth line (only on numeric bins) ---
+```{r}
+loess_fit <- loess(percent_sepsis ~ bin_mid,
+                   data = plot_data_temp %>% filter(!is.na(left)),
+                   span = 0.5)
+
+smooth_df <- data.frame(
+  bin_mid = seq(min(plot_data_temp$bin_mid, na.rm = TRUE),
+                max(plot_data_temp$bin_mid, na.rm = TRUE),
+                by = 0.1)
+)
+smooth_df$percent_pred <- predict(loess_fit, newdata = smooth_df)
+
+```
+
+## --- Step 5: Find crossings (at target_pct from Step 1) ---
+```{r}
+crossings_temp <- smooth_df %>%
+  mutate(diff = percent_pred - target_pct,
+         sign = sign(diff),
+         change = sign != lag(sign)) %>%
+  filter(change == TRUE) %>%
+  rowwise() %>%
+  mutate(bin_mid = round(bin_mid, 2)) %>%
+  ungroup() %>%
+  select(bin_mid, percent_pred)
+
+```
+
+## --- Step 6: Plot ---
+```{r}
+yr_start <- format(start_date, "%Y")
+yr_end   <- format(end_date, "%Y")
+
+ase_by_temp <- ggplot() +
+  geom_col(data = plot_data_temp,
+           aes(x = bin_mid, y = percent_sepsis),
+           fill = "darkred") +
+  geom_line(data = smooth_df,
+            aes(x = bin_mid, y = percent_pred),
+            color = "darkgoldenrod", size = 1.2) +
+  geom_hline(yintercept = target_pct, linetype = "dashed",
+             color = "darkgoldenrod1", size = 1) +
+  geom_point(data = crossings_temp,
+             aes(x = bin_mid, y = target_pct),
+             color = "darkgoldenrod", size = 3) +
+  geom_text(data = crossings_temp,
+            aes(x = bin_mid, y = target_pct,
+                label = sprintf("%.2f", bin_mid)),
+            vjust = -4, color = "darkgoldenrod", fontface = "bold", size = 5) +
+  scale_x_continuous(
+    breaks = c(34.9, seq(35, 40, 0.5), 40.1),
+    labels = c("(under 35)", seq(35, 40, 0.5), "(40+)")
+  ) +
+  labs(
+    x = "Temperature Range (°C)",
+    y = "Percent ASE Cases = 1",
+    title = paste("Percent of ASE Cases by Temperature Range \nCrossings at ", target_pct, "%", sep = "")
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(ase_by_temp)
+print(crossings_temp)
+
+```
+
+# Save Output - TEMPERATURE
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "histogram_temp_", Sys.Date(),".png")),
+  plot = ase_by_temp,
+  width = 7, height = 5, dpi = 300
+)
+```
+
+
+# =========================== WHITE COUNT HISTOGRAM ========================== #  
+
+# --- Step 1: Bin the selected WBC values ---
+```{r}
+bin_labels_wbc <- c(
+  paste0("(", seq(0, 17.9, by = 0.1), "-", seq(0.1, 18, by = 0.1), "]"),
+  "(18+)"
+)
+```
+
+## --- Step 2: Assign bins ---
+```{r}
+
+master_list <- master_list %>%
+  mutate(
+    wbc_bin = cut(
+      wbc_recorded,
+      breaks = c(seq(0, 18, by = 0.1), Inf),
+      include.lowest = TRUE,
+      right = TRUE,
+      labels = bin_labels_wbc
+    ),
+    wbc_bin = factor(wbc_bin, levels = bin_labels_wbc)
+  )
+```
+
+
+# --- Step 3: Aggregate by WBC bin ---
+```{r}
+plot_data_wbc <- master_list %>%
+  filter(!is.na(wbc_bin)) %>%
+  group_by(wbc_bin) %>%
+  summarise(
+    n_total = n(),
+    n_sepsis = sum(ase_flag == 1, na.rm = TRUE),
+    percent_sepsis = 100 * n_sepsis / n_total,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    left = as.numeric(str_extract(wbc_bin, "(?<=\\()[0-9.]+")),
+    right = as.numeric(str_extract(wbc_bin, "(?<=-)[0-9.]+")),
+    bin_mid = case_when(
+      !is.na(left) & !is.na(right) ~ (left + right) / 2,
+      grepl("\\(18\\+\\)", wbc_bin) ~ 18.5,
+      TRUE ~ NA_real_
+    )
+  )
+
+```
+
+# --- Step 4: Fit loess smoother ---
+```{r}
+
+loess_fit <- loess(percent_sepsis ~ bin_mid, data = plot_data_wbc, span = 0.5)
+smooth_df <- data.frame(
+  bin_mid = seq(min(plot_data_wbc$bin_mid, na.rm = TRUE),
+                max(plot_data_wbc$bin_mid, na.rm = TRUE),
+                by = 0.1)
+)
+smooth_df$percent_pred <- predict(loess_fit, newdata = smooth_df)
+
+```
+
+# --- Step 5: Find crossings (at target_pct from Step 1) ---
+```{r}
+crossings_wbc <- smooth_df %>%
+  mutate(diff = percent_pred - target_pct,
+         sign = sign(diff),
+         change = sign != lag(sign)) %>%
+  filter(change == TRUE) %>%
+  rowwise() %>%
+  mutate(bin_mid = round(bin_mid, 2)) %>%
+  ungroup() %>%
+  select(bin_mid, percent_pred)
+```
+
+# --- Step 6: Plot ---
+```{r}
+yr_start <- format(start_date, "%Y")
+yr_end   <- format(end_date, "%Y")
+
+ase_by_wbc <- ggplot() +
+  geom_col(data = plot_data_wbc,
+           aes(x = bin_mid, y = percent_sepsis),
+           fill = "navy") +
+  geom_line(data = smooth_df,
+            aes(x = bin_mid, y = percent_pred),
+            color = "orchid", size = 1.2) +
+  geom_hline(yintercept = target_pct, linetype = "dashed", color = "darkorchid", size = 1) +
+  geom_point(data = crossings_wbc,
+             aes(x = bin_mid, y = target_pct),
+             color = "darkorchid2", size = 3) +
+  geom_text(data = crossings_wbc,
+            aes(x = bin_mid, y = target_pct,
+                label = sprintf("%.1f", bin_mid)),
+            vjust = -3, color = "darkorchid3", fontface = "bold", size = 5) +
+  labs(
+    x = "WBC Range (×10^9/L)",
+    y = "Percent Cases = 1",
+    title = paste("Percent of ASE Cases by WBC Range \n",
+                  "Crossings at ", target_pct, "%", sep = "")
+  ) +
+  theme_minimal()
+
+print(ase_by_wbc)
+print(crossings_wbc)
+
+```
+
+# Save Output - WBC
+```{r}
+ggsave(
+  filename = file.path(config$output_path, "outputs", paste0(config$site_name,"_", "histogram_wbc", Sys.Date(),".png")),
+  plot = ase_by_wbc,
+  width = 7, height = 5, dpi = 300
+)
+```
+
+
