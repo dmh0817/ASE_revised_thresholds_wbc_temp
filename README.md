@@ -44,12 +44,13 @@ project-root/
 ├── config/  
 │ ├── config.json – Primary configuration file containing site name, paths  
 │  
-├── 00_set_up.Rmd – Initializes environment, loads packages, and reads configuration  
-├── 01_valid_hosp_ASE.Rmd – Defines valid hospitalizations and identifies ASE cases  
-├── 02_heat_map_naming_updated.Rmd – Generates Youden Index heatmaps  
-├── 03_Histograms.Rmd – Creates WBC and temperature ASE-prevalence histograms  
-├── 04_stepwise_odds_ratio.Rmd – Runs stepwise odds ratio analyses and plots results  
-├── 05_quick_table.Rmd – Builds and exports basic Table 1 summary statistics  
+├── code/   
+│ ├── 00_set_up.Rmd – Initializes environment, loads packages, and reads configuration  
+│ ├── 01_valid_hosp_ASE.Rmd – Defines valid hospitalizations and identifies ASE cases  
+│ ├── 02_heat_map_naming_updated.Rmd – Generates Youden Index heatmaps  
+│ ├── 03_Histograms.Rmd – Creates WBC and temperature ASE-prevalence histograms  
+│ ├── 04_stepwise_odds_ratio.Rmd – Runs stepwise odds ratio analyses and plots results  
+│ ├── 05_quick_table.Rmd – Builds and exports basic Table 1 summary statistics  
 │  
 ├── intermediate/ – Intermediate data files and derived datasets  
 ├── outputs/ – Final plots, tables, and reports  
