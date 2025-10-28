@@ -22,7 +22,7 @@ _________________________
 
 _________________________
 
-# Run [02_heat_map_naming_updated.Rmd](code/02_heat_map_naming_updated.Rmd)  
+# Run [02_heat_map_naming_updated.Rmd](02_heat_map_naming_updated.Rmd)  
 ### This script should:  
 * Create Youden-Index heatmaps for WBC and Temperature based on ase_flag (sepsis cases)
 
@@ -35,7 +35,7 @@ _________________________
 
 _______________________
 
-# Run [03_Histograms.Rmd](code/03_Histograms.Rmd)  
+# Run [03_Histograms.Rmd](03_Histograms.Rmd)  
 ### This script should:  
 * Create histograms of ase-prevalence by interval based on ase_flag (sepsis cases)
 
@@ -48,7 +48,7 @@ _______________________
 
 _______________________
 
-# Run [04_stepwise_odds_ratio.Rmd](code/04_stepwise_odds_ratio.Rmd)  
+# Run [04_stepwise_odds_ratio.Rmd](04_stepwise_odds_ratio.Rmd)  
 ### This script should:  
 * Create stepwise odds-ratios (forward and backward) for temp and WBC based on ase_flag (sepsis cases)
 
@@ -61,7 +61,7 @@ _______________________
 
 _______________________
 
-# Run [05_quick_table.Rmd](code/05_quick_table.Rmd)  
+# Run [05_quick_table.Rmd](05_quick_table.Rmd)  
 ### This script should:  
 * Create a basic table with patient demographics 
 
