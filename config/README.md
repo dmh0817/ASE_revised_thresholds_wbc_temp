@@ -1,13 +1,13 @@
 # General Workflow 
 1. Please edit the fields in the config_template.json file with your site specific information.
   - "site_name" should be your site
-  - "output_path" should be local working directory folder
+  - "output_path" should be local working directory folder / project root
   - "tables_path" should be where your CLIF_.parquet files are located
   - "file_type" is parquet
 3. Save the updated config_template.json file as config.json in a folder called "config" in your local directory - see below for additional info
 
 
-Recommend your local directory should look like:  
+Recommend your set up should look like:  
 
 project-root/  
 ├── config/  
