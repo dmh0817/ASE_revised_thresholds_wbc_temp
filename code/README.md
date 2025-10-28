@@ -3,7 +3,7 @@
 ## General Workflow  
 
 * Before beginning:
-    * Ensure your config.json files has been updated and saved  
+    * Ensure your config.json file has been updated and saved. See [config README](config/README.md) for more details if needed  
     * Ensure config.R has been run
       
 _________________________
