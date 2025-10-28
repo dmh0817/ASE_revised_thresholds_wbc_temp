@@ -84,3 +84,4 @@ _______________________
 
 ### Expected Output
 * sitename_table1_Sys.Date().pdf saved to "outputs" folder
+* sitename_table1_Sys.Date().csv saved to "outputs" folder
