@@ -38,3 +38,4 @@ initialize_renv.R
 
 # ignore intermediates
 intermediate/
+outputs/
