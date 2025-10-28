@@ -1,6 +1,6 @@
 ---
 title: "Stepwise Odds Ratio - Temp and WBC"
-output: html_notebook
+
 ---
 
 # ========================== TEMPERATURE STEPWISE OR ========================= #  

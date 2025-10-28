@@ -1,6 +1,6 @@
 ---
 title: "Quick Table1 Report"
-author: "Danielle"
+author: "site_name"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -74,6 +74,19 @@ gtsummary::as_gt(table1) %>%
   gt::gtsave(filename = file.path(config$output_path,"outputs",
                                   paste0(config$site_name, "_table1_", Sys.Date(), ".pdf")))
 
+```
+
+# Save as CSV
+```{r}
+# Create CSV file path
+csv_path <- file.path(
+  config$output_path, "outputs",
+  paste0(config$site_name, "_table1_", Sys.Date(), ".csv")
+)
+
+# Convert gtsummary table to CSV text and write it out
+gtsummary::as_tibble(table1) %>%
+  readr::write_csv(csv_path)
 ```
 
 

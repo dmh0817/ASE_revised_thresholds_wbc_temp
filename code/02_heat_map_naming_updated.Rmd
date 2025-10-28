@@ -1,6 +1,6 @@
 ---
 title: "Youden Index Heat Maps - Temp and WBC"
-output: html_notebook
+
 ---
   
 # ================================================================

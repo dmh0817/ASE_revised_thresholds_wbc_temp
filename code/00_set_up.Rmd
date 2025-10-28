@@ -1,0 +1,54 @@
+---
+title: "00_set_up"
+
+---
+
+# ---- Smart package loader ----
+```{r}
+
+smart_load <- function(pkgs) {
+  # Identify any packages not yet installed
+  missing <- pkgs[!pkgs %in% rownames(installed.packages())]
+  
+  # Install missing ones if necessary
+  if (length(missing) > 0) {
+    message("Installing missing packages: ", paste(missing, collapse = ", "))
+    install.packages(missing, dependencies = TRUE)
+  }
+  
+  # Load all packages quietly
+  invisible(lapply(pkgs, function(pkg) {
+    suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+  }))
+}
+
+# ---- Run it ----
+smart_load(c(
+  "jsonlite", "arrow", "dplyr", "lubridate", "tidyr",
+  "ggplot2", "patchwork", "rlang", "dcurves",
+  "gtsummary", "broom", "stringr", "purrr", "tidyverse"
+))
+
+```
+
+
+# Function to load configuration
+
+```{r}
+
+load_config <- function() {
+  json_path <- "config/config.json"
+  if (file.exists(json_path)) {
+    config <- fromJSON(json_path)
+    message("Loaded configuration from config.json")
+  } else {
+    stop("Configuration file not found. Please create config.json based on the config_template.")
+  }
+  return(config)
+}
+
+# Load the configuration
+config <- load_config()
+
+```
+

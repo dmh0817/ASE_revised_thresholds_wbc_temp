@@ -1,6 +1,6 @@
 ---
 title: "01_valid_hosp_ASE"
-output: html_document
+
 ---
 # Identify all valid hospitalizations for thresholds project 
 

@@ -4,8 +4,21 @@
 
 * Before beginning:
     * Ensure your config.json file has been updated and saved. See [config README](config/README.md) for more details if needed  
-    * Ensure config.R has been run
-      
+
+
+_________________________
+
+# Run [00_set_up.Rmd](00_set_up.Rmd)  
+### This script should:  
+* Install and load required packages  
+* Initialize environment  
+* Set up config
+
+### Input
+* config.json needs to be updated with site specific information before running
+
+### Expected Output
+* N/A
 _________________________
 
 # Run [01_valid_hosp_ASE.Rmd](01_valid_hosp_ASE.Rmd)  

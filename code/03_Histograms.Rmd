@@ -1,6 +1,6 @@
 ---
 title: "Histograms- Temperature and WBC"
-output: html_notebook
+
 ---
 
 ## --- Set Up: Set target percentage of smoothed line intercept ---
