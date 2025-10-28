@@ -12,9 +12,9 @@ This study limited sepsis cases to community acquired sepsis.
 
 # Data Sources
 ### Sites: 
-No restrictions
+Sites must have non-ICU data
 ### Study Period:
-2024 - 2025  
+01-01-2024 - 03-01-2025  
 
 # Required CLIF tables
 The following tables are required:
