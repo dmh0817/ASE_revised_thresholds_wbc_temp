@@ -54,6 +54,7 @@ project-root/
 ├── intermediate/ – Intermediate data files and derived datasets  
 ├── outputs/ – Final plots, tables, and reports  
 
+# Now to run the project:
 1. Update the config_template.json to config.json
 2. Run code in numerical order
 3. Upload outputs to Box folder (instructions in outputs README)
