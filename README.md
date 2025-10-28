@@ -4,15 +4,17 @@ Optimized WBC and temp thresholds for early sepsis detection
 # Project Overview:
 Traditionally accepted ranges for white blood cell (WBC) counts (4 – 12 x10⁹/L) and temperature (36 - 38°C) in sepsis were originally derived from expert consensus in the early 1990s and continue to play a prominent role in driving suspicion of potential sepsis cases and associated clinical decision making. 
 
-We aimed to evaluate optimized WBC and temperature thresholds using real-world, large-scale EHR data. For this project, sepsis is defined using the CDC Adult Sepsis Event (ASE) criteria which requires:
+**Our aim is to evaluate optimized WBC and temperature thresholds using real-world, large-scale EHR data**. For this project, sepsis is defined using the CDC Adult Sepsis Event (ASE) criteria which requires:
 1. A presumed serious infection as evidenced by blood culture collection and a minimum of four consecutive days of antibiotics (some exceptions for discharge locations / expiration)
 2. Evidence of end organ dysfunction.
    
 This study limited sepsis cases to community acquired sepsis.
 
 # Data Sources
-### Sites: **No restrictions**
-### Study Period: **2024 - 2025**
+### Sites: 
+No restrictions
+### Study Period:
+2024 - 2025  
 
 # Required CLIF tables
 The following tables are required:
