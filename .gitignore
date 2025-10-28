@@ -36,6 +36,6 @@ initialize_renv.R
 *.html
 *.png
 
-# ignore intermediates
+# ignore intermediates and outputs
 intermediate/
 outputs/
