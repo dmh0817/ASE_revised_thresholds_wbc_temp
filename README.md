@@ -37,6 +37,23 @@ The following tables are required:
 - ED visit only (no admission to wards or ICU)
 
 # Instructions for running project:
+
+Before beginning, recommend your set up looks like:
+
+project-root/  
+├── config/  
+│ ├── config.json – Primary configuration file containing site name, paths  
+│  
+├── 00_set_up.Rmd – Initializes environment, loads packages, and reads configuration  
+├── 01_valid_hosp_ASE.Rmd – Defines valid hospitalizations and identifies ASE cases  
+├── 02_heat_map_naming_updated.Rmd – Generates Youden Index heatmaps  
+├── 03_Histograms.Rmd – Creates WBC and temperature ASE-prevalence histograms  
+├── 04_stepwise_odds_ratio.Rmd – Runs stepwise odds ratio analyses and plots results  
+├── 05_quick_table.Rmd – Builds and exports basic Table 1 summary statistics  
+│  
+├── intermediate/ – Intermediate data files and derived datasets  
+├── outputs/ – Final plots, tables, and reports  
+
 1. Update the config_template.json to config.json
 2. Run code in numerical order
 3. Upload outputs to Box folder (instructions in outputs README)
