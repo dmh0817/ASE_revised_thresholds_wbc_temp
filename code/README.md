@@ -8,7 +8,7 @@
       
 _________________________
 
-# Run [01_valid_hosp_ASE.Rmd](code/01_valid_hosp_ASE.Rmd)  
+# Run [01_valid_hosp_ASE.Rmd](01_valid_hosp_ASE.Rmd)  
 ### This script should:  
 * Define valid hospitalizations by inclusion / exclusion criteria
 * Identify patients meeting [ASE Criteria](https://stacks.cdc.gov/view/cdc/132387)
