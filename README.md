@@ -14,7 +14,7 @@ This study limited sepsis cases to community acquired sepsis.
 ### Sites: 
 Sites must have non-ICU data
 ### Study Period:
-01-01-2024 - 03-01-2025  
+Admission times between 01-01-2024 to 03-01-2025, inclusive  
 
 # Required CLIF tables
 The following tables are required:
