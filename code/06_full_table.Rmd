@@ -1,0 +1,435 @@
+---
+title: "Full Table1 Report"
+
+---
+
+# Creating Full Table - Based from 01 Rmd
+```{r}
+patient_ds <- open_dataset(file.path(config$tables_path, "clif_patient.parquet")) %>% 
+  collect()
+hospital_ds <- open_dataset(file.path(config$tables_path, "clif_hospitalization.parquet")) %>% 
+  collect()
+
+master_list_demos <- master_list %>% 
+  inner_join(hospital_ds %>% select(hospitalization_id, patient_id, discharge_dttm, discharge_category), by = "hospitalization_id") %>% 
+  collect() %>% 
+  inner_join(patient_ds %>% select(patient_id, sex_category, race_category, ethnicity_category), by = "patient_id")
+
+```
+
+# Mortality, LOS
+```{r}
+master_list_demos_LOS <- master_list_demos %>%
+  mutate(
+    los = as.numeric(difftime(discharge_dttm, admission_dttm, units = "days")), 
+    mortality = ifelse(discharge_category == "Expired", 1, 0)
+  )
+```
+
+## SOFA VARIABLES
+### Code applies the following [Sepsis-3 SOFA criteria](https://jamanetwork.com/journals/jama/fullarticle/2492881)
+
+## Record overall SOFA score - in first 24 hours of admission. If no data, assume 0. If multiple in 24 hour timeframe, take highest score
+
+# LABS FIRST
+```{r}
+long_sofa_labs <- open_dataset(file.path(config$tables_path, "clif_labs.parquet")) %>%
+  filter(lab_category %in% c("creatinine", "bilirubin_total", "platelet_count")) %>%
+  select(hospitalization_id, lab_category, lab_value_numeric, lab_result_dttm) %>%
+  collect() %>%
+  distinct()
+
+```
+
+# Master List with timing for SOFA
+```{r}
+master_list_sofa <- master_list %>%
+  mutate(sofa_start = admission_dttm, 
+         sofa_end = admission_dttm + hours(24)
+         )
+
+```
+
+## Coagulation - platelets
+```{r}
+#* >= 150: 0
+#* < 150: 1
+#* < 100: 2
+#* < 50: 3
+#* < 20: 4
+
+platelets_sofa <- long_sofa_labs %>%
+  filter(lab_category == "platelet_count") %>%
+  group_by(hospitalization_id) %>%
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  rename(platelet_dttm = lab_result_dttm) %>%
+  filter(platelet_dttm >= sofa_start & platelet_dttm <= sofa_end) %>%
+  group_by(hospitalization_id) %>%
+  mutate(platelet_sofa = case_when(
+    (lab_value_numeric < 20) ~ 4, 
+    (lab_value_numeric < 50) ~ 3,
+    (lab_value_numeric < 100) ~2, 
+    (lab_value_numeric < 150) ~1, 
+    TRUE ~ 0
+  )) %>% 
+  group_by(hospitalization_id) %>%
+  slice_max(platelet_sofa) %>%
+  slice_max(lab_value_numeric) %>%
+  slice_min(platelet_dttm) %>%
+  distinct()
+
+```
+
+## Liver - bilirubin
+```{r}
+#* <1.2: 0
+#* 1.2 - 1.9: 1
+#* 2.0 - 5.9: 2
+#* 6 - 11.9: 3
+#* > 12 - 4: 4
+
+bilirubin_sofa <- long_sofa_labs %>%
+  filter(lab_category == "bilirubin_total") %>%
+  group_by(hospitalization_id) %>%
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  rename(bilirubin_dttm = lab_result_dttm) %>%
+  filter(bilirubin_dttm >= sofa_start & bilirubin_dttm <= sofa_end) %>%
+  group_by(hospitalization_id) %>%
+  mutate(bilirubin_sofa = case_when(
+    (lab_value_numeric >= 12) ~ 4, 
+    (lab_value_numeric >= 6 & lab_value_numeric < 12) ~ 3,
+    (lab_value_numeric >= 2 & lab_value_numeric < 6) ~ 2, 
+    (lab_value_numeric >= 1.2 & lab_value_numeric < 2) ~ 1, 
+    TRUE ~ 0
+  )) %>% 
+  group_by(hospitalization_id) %>%
+  slice_max(bilirubin_sofa) %>%
+  group_by(hospitalization_id) %>%
+  slice_max(lab_value_numeric) %>%
+  slice_min(bilirubin_dttm) %>%
+  distinct()
+
+```
+
+## RENAL - Using Cr only. UOP not available.
+```{r}
+#* Cr <1.2: 0
+#* Cr 1.2 - 1.9: 1
+#* Cr 2.0 - 3.4: 2
+#* Cr 3.5 - 4.9 (OR UOP) <500: 3
+#* Cr > 5.0 (OR UOP) < 200: 4
+
+creatinine_sofa <- long_sofa_labs %>%
+  filter(lab_category == "creatinine") %>%
+  group_by(hospitalization_id) %>%
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  rename(creatinine_dttm = lab_result_dttm) %>%
+  filter(creatinine_dttm >= sofa_start & creatinine_dttm <= sofa_end) %>%
+  group_by(hospitalization_id) %>%
+  mutate(creatinine_sofa = case_when(
+    (lab_value_numeric >= 5) ~ 4, 
+    (lab_value_numeric >= 3.5 & lab_value_numeric <5) ~ 3, 
+    (lab_value_numeric >= 2 & lab_value_numeric < 3.5) ~ 2,
+    (lab_value_numeric >= 1.2 & lab_value_numeric < 2) ~ 1, 
+    TRUE ~ 0
+  )) %>%  
+  group_by(hospitalization_id) %>%
+  slice_max(creatinine_sofa) %>%
+  slice_max(lab_value_numeric) %>%
+  slice_min(creatinine_dttm) %>%
+  distinct()
+```
+
+# Respiration - PaO2/FiO2 ratio
+```{r}
+##* >= 400: 0
+##* < 400: 1
+##* < 300: 2
+##* < 200 (with respiratory support): 3
+##* < 100 (with respiratory support): 4
+
+# Need ABG (labs table) for PaO2. Need FiO2 from respiratory table
+
+
+pao2_labs <- open_dataset(file.path(config$tables_path, "clif_labs.parquet"))%>%
+  filter(lab_category == "po2_arterial") %>%
+  select(hospitalization_id, lab_category, lab_value_numeric, lab_result_dttm) %>%
+  rename(pao2_dttm = lab_result_dttm) %>%
+  rename(pao2_value = lab_value_numeric) %>%
+  collect() %>%
+  select(hospitalization_id, pao2_value, pao2_dttm) %>%
+  distinct()
+
+fio2_labs <- open_dataset(file.path(config$tables_path, "clif_respiratory_support.parquet")) %>%
+  collect() %>%
+  filter(fio2_set >= 0) %>%
+  select(hospitalization_id, fio2_set, recorded_dttm, device_name, device_category) %>%
+  rename(fio2_dttm = recorded_dttm) %>%
+  rename(fio2_value = fio2_set) %>%
+  collect() %>%
+  select(hospitalization_id, fio2_value, fio2_dttm, device_name, device_category) %>%
+  distinct()
+
+pao2_fio2 <- fio2_labs %>%
+  left_join(pao2_labs %>% select(hospitalization_id, pao2_value, pao2_dttm), by = "hospitalization_id", relationship = "many-to-many") %>%
+  mutate(time_diff = as.numeric(difftime(fio2_dttm, pao2_dttm, unit = "hours"))) %>%
+  filter(time_diff >= -1 & time_diff <= 1) %>%    #times within an hour of each other
+  mutate(ratio_dttm = pmin(pao2_dttm, fio2_dttm, na.rm = TRUE)) %>%   # choose earliest value between the two pao2 / fio2
+  mutate(ratio_value = pao2_value / fio2_value) %>%  # find ratio
+  select(hospitalization_id, ratio_value, ratio_dttm, device_name, device_category) 
+
+pao2_fio2_sofa <- pao2_fio2 %>%
+  inner_join(master_list_sofa %>% select(hospitalization_id, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>% 
+  filter(ratio_dttm >= sofa_start & ratio_dttm <= sofa_end) %>%
+  mutate(respiratory_sofa = case_when(
+    (ratio_value < 100 & device_category != "Room Air") ~ 4,
+    (ratio_value < 200 & device_category != "Room Air") ~3,
+    (ratio_value < 300) ~ 2,
+    (ratio_value < 400) ~ 1, 
+    TRUE ~ 0
+  )) %>%
+  group_by(hospitalization_id) %>%
+  slice_max(respiratory_sofa) %>%
+  slice_min(ratio_value) %>%
+  slice_min(ratio_dttm) %>%
+  select(hospitalization_id, ratio_value, ratio_dttm, respiratory_sofa) %>%
+  distinct()
+  
+```
+
+# CARDIOVASCULAR - MAP and pressors
+```{r}
+# MAP is in vitals table, vasopressors are in continuous 
+#* MAP >= 70: 0
+#* MAP < 70: 1
+#* Dopamine <5 OR dobutamine (any): 2
+#* Dopamine 5.1 - 15 OR epi <= 0.1 OR norepi <= 0.1: 3
+#* Dopamine > 15 OR epi > 0.1 OR norepi >0.1: 4
+
+vasopressor_use <- open_dataset(file.path(config$tables_path, "clif_medication_admin_continuous.parquet")) %>%
+  filter(med_group == "vasoactives") %>%
+  filter(med_category %in% c("dopamine", "norepinephrine", "epinephrine", "dobutamine")) %>%
+  filter(med_dose_unit == "mcg/kg/min")%>%
+  collect() %>%
+  select(hospitalization_id, med_category, med_dose, med_dose_unit, admin_dttm) %>% 
+  rename(vasopressor_dttm = admin_dttm)
+
+vasopressor_use <- vasopressor_use  %>% 
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  filter(vasopressor_dttm >= sofa_start & vasopressor_dttm <= sofa_end)
+
+map_value <- open_dataset(file.path(config$tables_path, "clif_vitals.parquet")) %>%
+  filter(vital_category == "map") %>%
+  collect() %>%
+  distinct() %>%
+  rename(map_dttm = recorded_dttm)
+
+map_value <- map_value %>%
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  filter(map_dttm >= sofa_start & map_dttm <= sofa_end)
+
+cardio_sofa <- map_value %>% 
+  filter(vital_category == "map") %>%
+  left_join(
+    vasopressor_use %>%
+      select(hospitalization_id, vasopressor_dttm, med_category, med_dose),
+    by = "hospitalization_id", 
+    relationship = "many-to-many"
+  ) %>%
+  select(hospitalization_id, vasopressor_dttm, med_category, med_dose, vital_value, map_dttm) %>%
+  group_by(hospitalization_id) %>%
+  mutate(
+    cardio_sofa = case_when(
+      (med_category == "dopamine" & med_dose > 15) |
+        (med_category == "epinephrine" & med_dose > 0.1) |
+        (med_category == "norepinephrine" & med_dose > 0.1) ~ 4,
+      
+      (med_category == "dopamine" & med_dose > 5 & med_dose <= 15) |
+        (med_category == "epinephrine" & med_dose <= 0.1) |
+        (med_category == "norepinephrine" & med_dose <= 0.1) ~ 3,
+      
+      (med_category == "dopamine" & med_dose <= 5) |
+      (med_category == "dobutamine") ~ 2,
+      
+      vital_value < 70 ~ 1, 
+      
+      vital_value >= 70 ~ 0,
+      
+      TRUE ~ 0
+    )
+  ) %>% 
+  group_by(hospitalization_id) %>% 
+  slice_max(cardio_sofa) %>% 
+  slice_min(vital_value)%>%
+  slice_min(map_dttm) %>% 
+  slice_min(vasopressor_dttm) %>% 
+  distinct()
+
+
+```
+
+# CNS - GCS scale
+```{r}
+
+# GCS in patient assessment table, assessment_category = gcs_total 
+#* GCS 15: 0
+#* GCS 13-14: 1
+#* GCS 10 - 12: 2
+#* GCS 6-9: 3
+#* GCS <6: 4
+
+
+gcs_score <- open_dataset(file.path(config$tables_path, "clif_patient_assessments.parquet")) %>%
+  filter(assessment_category == "gcs_total") %>%
+  collect() %>% 
+  rename(gcs_dttm = recorded_dttm) %>% 
+  rename(gcs_value = numerical_value) %>% 
+  select(hospitalization_id, gcs_dttm, assessment_category, gcs_value) %>% 
+  group_by(hospitalization_id)
+
+cns_sofa <- gcs_score %>% 
+  inner_join(master_list_sofa %>% select(hospitalization_id, wbc_recorded, temp_recorded, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>%
+  filter(gcs_dttm >= sofa_start & gcs_dttm <= sofa_end) %>% 
+  group_by(hospitalization_id) %>% 
+  mutate(cns_sofa = case_when(
+    (gcs_value < 6) ~ 4, 
+    (gcs_value >= 6 & gcs_value <=9) ~ 3, 
+    (gcs_value >= 10 & gcs_value <=12) ~ 2,
+    (gcs_value >= 13 & gcs_value <=14) ~ 1,
+    TRUE ~ 0
+  )) %>% 
+  group_by(hospitalization_id) %>% 
+  slice_max(cns_sofa) %>% 
+  slice_min(gcs_dttm) %>%
+  distinct()
+
+
+```
+
+# Join the SOFA scores and show individual components
+```{r}
+sofa_calc <- master_list_sofa %>% 
+  left_join(cardio_sofa %>% select(hospitalization_id, cardio_sofa), by = "hospitalization_id") %>% 
+  left_join(cns_sofa %>% select(hospitalization_id, cns_sofa), by = "hospitalization_id") %>% 
+  left_join(bilirubin_sofa %>% select(hospitalization_id, bilirubin_sofa), by = "hospitalization_id") %>% 
+  left_join(platelets_sofa %>% select(hospitalization_id, platelet_sofa), by = "hospitalization_id") %>% 
+  left_join(creatinine_sofa %>% select(hospitalization_id, creatinine_sofa), by = "hospitalization_id") %>% 
+  left_join(pao2_fio2_sofa %>% select(hospitalization_id, respiratory_sofa), by = "hospitalization_id") %>%
+  collect() %>% 
+  select(hospitalization_id, wbc_recorded, temp_recorded, cardio_sofa, cns_sofa, bilirubin_sofa, platelet_sofa, creatinine_sofa, respiratory_sofa) %>% 
+  mutate(across(
+    c(cardio_sofa, cns_sofa, bilirubin_sofa, platelet_sofa, creatinine_sofa, respiratory_sofa),
+    ~ replace_na(., 0)
+  )) %>%
+  mutate(sofa_score = cardio_sofa + cns_sofa + bilirubin_sofa + platelet_sofa + creatinine_sofa + respiratory_sofa) %>%
+  distinct()
+```
+
+
+# SOFA Score, Components of SOFA
+```{r}
+master_list_demos_LOS_sofa <- master_list_demos_LOS %>%
+  inner_join(sofa_calc %>% select(hospitalization_id, cardio_sofa, cns_sofa, bilirubin_sofa, platelet_sofa, creatinine_sofa, respiratory_sofa, sofa_score), by = "hospitalization_id")
+
+```
+
+
+# Creating Full Table
+```{r}
+# ---- Define dataset ----
+data_t1 <- master_list_demos_LOS_sofa %>%
+  select(
+    -hospitalization_id,
+    -patient_id,
+    -admission_dttm,
+    -discharge_dttm,
+    -presumed_flag,
+    -discharge_category
+  ) %>%
+  relocate(sofa_score, .before = cardio_sofa) %>%
+  mutate(
+    ase_flag = factor(ase_flag, c(0, 1), c("No Sepsis", "Sepsis")),
+    mortality = factor(mortality, c(0, 1), c("Survived", "Expired")),
+    cardio_sofa      = factor(cardio_sofa,      0:4, c("0 points","1 Point","2 Points","3 Points","4 Points")),
+    cns_sofa         = factor(cns_sofa,         0:4, c("0 points","1 Point","2 Points","3 Points","4 Points")),
+    bilirubin_sofa   = factor(bilirubin_sofa,   0:4, c("0 points","1 Point","2 Points","3 Points","4 Points")),
+    platelet_sofa    = factor(platelet_sofa,    0:4, c("0 points","1 Point","2 Points","3 Points","4 Points")),
+    respiratory_sofa = factor(respiratory_sofa, 0:4, c("0 points","1 Point","2 Points","3 Points","4 Points")),
+    creatinine_sofa  = factor(creatinine_sofa,  0:4, c("0 points","1 Point","2 Points","3 Points","4 Points"))
+  )
+
+# ---- Create Table 1 ----
+table1 <- data_t1 %>%
+  tbl_summary(
+    by = ase_flag,
+
+    label = list(
+      age_at_admission   ~ "Age at Admission (years)",
+      wbc_recorded       ~ "White Blood Cell Count (×10⁹/L)",
+      temp_recorded      ~ "Temperature (°C)",
+      los                ~ "Length of Stay (days)",
+      mortality          ~ "Mortality",
+
+      sex_category       ~ "Sex",
+      race_category      ~ "Race",
+      ethnicity_category ~ "Ethnicity",
+
+      sofa_score         ~ "SOFA Score",
+      cardio_sofa        ~ "Cardiovascular Dysfunction",
+      cns_sofa           ~ "Central Nervous System Dysfunction",
+      bilirubin_sofa     ~ "Liver Dysfunction",
+      platelet_sofa      ~ "Coagulation Dysfunction",
+      respiratory_sofa   ~ "Respiratory Dysfunction",
+      creatinine_sofa    ~ "Renal Dysfunction"
+    ),
+
+    # variables receiving two-line summaries
+    type = list(
+      age_at_admission ~ "continuous2",
+      sofa_score       ~ "continuous2",
+      wbc_recorded     ~ "continuous2",
+      temp_recorded    ~ "continuous2",
+      los              ~ "continuous2"
+    ),
+
+    # Define two lines for each of the selected variables
+    statistic = list(
+      all_continuous() ~ "{median} ({p25}, {p75})",
+
+      age_at_admission ~ c("{median} ({p25}, {p75})", "{mean} ({sd})"),
+      sofa_score       ~ c("{median} ({p25}, {p75})", "{mean} ({sd})"),
+      wbc_recorded     ~ c("{median} ({p25}, {p75})", "{mean} ({sd})"),
+      temp_recorded    ~ c("{median} ({p25}, {p75})", "{mean} ({sd})"),
+      los              ~ c("{median} ({p25}, {p75})", "{mean} ({sd})"),
+
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+
+    # enforce one decimal place for all continuous rows
+    digits = list(
+      all_continuous() ~ 1,
+      all_continuous2() ~ 1
+    ),
+
+    missing = "no"
+  ) %>%
+  modify_header(label ~ "**Variable**") %>%
+  bold_labels() %>%
+  add_overall()
+
+# ---- View Table ----
+table1
+```
+
+# Save as CSV
+```{r}
+# Create CSV file path
+csv_path <- file.path(
+  config$output_path, "outputs",
+  paste0(config$site_name, "_table1_", Sys.Date(), ".csv")
+)
+
+# Convert gtsummary table to CSV text and write it out
+gtsummary::as_tibble(table1) %>%
+  readr::write_csv(csv_path)
+```
