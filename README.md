@@ -27,6 +27,7 @@ The following tables are required:
 7. medication_admin_continuous: med_group, admin_dttm
 8. respiratory_support: device_category, recorded_dttm
 9. patient_assessments: assessment_category, recorded_dttm, numerical_value 
+10. hospital_diagnosis: diagnosis_code, diagnosis_code_format, poa_present
 
 # Inclusion Criteria:
 - Age >= 18 years at time of admission
@@ -51,7 +52,9 @@ project-root/
 │ ├── 02_heat_map_naming_updated.Rmd – Generates Youden Index heatmaps  
 │ ├── 03_Histograms.Rmd – Creates WBC and temperature ASE-prevalence histograms  
 │ ├── 04_stepwise_odds_ratio.Rmd – Runs stepwise odds ratio analyses and plots results  
-│ ├── 05_quick_table.Rmd – Builds and exports basic Table 1 summary statistics  
+│ ├── 05_quick_table.Rmd – Builds and exports basic Table 1 summary statistics
+│ ├── 06_full_table.Rmd – Builds and exports expanded Table 1 with LOS, mortality, SOFA
+│ ├── 07_se_sp_ppv_npv.Rmd – Builds and exports tables with se/sp/ppv/npv for temp and WBC thresholds 
 │  
 ├── intermediate/ – Intermediate data files and derived datasets  
 ├── outputs/ – Final plots, tables, and reports  
