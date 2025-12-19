@@ -26,6 +26,7 @@ The following tables are required:
 6. medication_admin_intermittent: med_group, med_name, admin_dttm
 7. medication_admin_continuous: med_group, admin_dttm
 8. respiratory_support: device_category, recorded_dttm
+9. patient_assessments: assessment_category, recorded_dttm, numerical_value 
 
 # Inclusion Criteria:
 - Age >= 18 years at time of admission

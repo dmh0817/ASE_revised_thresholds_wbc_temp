@@ -85,3 +85,16 @@ _______________________
 ### Expected Output
 * sitename_table1_Sys.Date().pdf saved to "outputs" folder
 * sitename_table1_Sys.Date().csv saved to "outputs" folder
+
+_______________________
+
+# Run [06_full_table.Rmd](06_full_table.Rmd)  
+### This script should:  
+* Create a more robust table with patient demographics than 05, now including SOFA score, length of stay (LOS), mortality.
+
+### Input
+* master_list (created in 01_valid_hosp, saved down in "intermediate" folder)
+* CLIF tables: patient, hospitalization, labs, respiratory_support, medication_admin_continuous, patient_assessments
+
+### Expected Output
+* sitename_table1_Sys.Date().csv saved to "outputs" folder
