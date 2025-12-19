@@ -98,3 +98,17 @@ _______________________
 
 ### Expected Output
 * sitename_table1_Sys.Date().csv saved to "outputs" folder
+
+_______________________
+
+# Run [07_se_sp_ppv_npv.Rmd](07_se_sp_ppv_npv.Rmd)  
+### This script should:  
+* Create tables with thresholds for temp and WBC based on three completed analyses (02, 03, 04)
+
+### Input
+* Variables created during 02, 03, 04 code
+* CLIF tables: N/A
+
+### Expected Output
+* site_name_temp_threshold_metrics_Sys.Date().csv saved to "outputs" folder
+* site_name_wbc_threshold_metrics_Sys.Date().csv saved to "outputs" folder
