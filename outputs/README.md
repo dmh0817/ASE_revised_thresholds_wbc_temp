@@ -7,6 +7,8 @@
 * sitename_stepwiseOR_wbc_Sys.Date().png
 * sitename_table1_Sys.Date().pdf
 * sitename_table1_Sys.Date().csv 
+* site_name_temp_threshold_metrics_Sys.Date().csv
+* site_name_wbc_threshold_metrics_Sys.Date().csv
 
 # Upload outputs to Box folder: 
 https://uchicago.app.box.com/s/t2jl5qua4krg7ixw2yjnfexgl2qq0l0s
