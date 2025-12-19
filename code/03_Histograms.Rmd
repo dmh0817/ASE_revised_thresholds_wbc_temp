@@ -109,7 +109,7 @@ ase_by_temp <- ggplot() +
              color = "darkgoldenrod", size = 3) +
   geom_text(data = crossings_temp,
             aes(x = bin_mid, y = target_pct,
-                label = sprintf("%.2f", bin_mid)),
+                label = sprintf("%.1f", bin_mid)),
             vjust = -4, color = "darkgoldenrod", fontface = "bold", size = 5) +
   scale_x_continuous(
     breaks = c(34.9, seq(35, 40, 0.5), 40.1),
@@ -127,6 +127,15 @@ print(ase_by_temp)
 print(crossings_temp)
 
 ```
+
+# ================================================================
+# ------------------ Store best TEMP thresholds ------------------
+# ================================================================
+```{r}
+temp_lower_histogram <- crossings_temp$bin_mid[1]
+temp_upper_histogram <- crossings_temp$bin_mid[2]
+```
+
 
 # Save Output - TEMPERATURE
 ```{r}
@@ -246,6 +255,15 @@ print(ase_by_wbc)
 print(crossings_wbc)
 
 ```
+
+# ================================================================
+# ------------------ Store best WBC thresholds ------------------
+# ================================================================
+```{r}
+wbc_lower_histogram <- crossings_wbc$bin_mid[1]
+wbc_upper_histogram <- crossings_wbc$bin_mid[2]
+```
+
 
 # Save Output - WBC
 ```{r}

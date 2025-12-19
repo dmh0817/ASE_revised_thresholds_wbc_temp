@@ -1,0 +1,164 @@
+---
+title: "Se/Sp/PPV/NPV"
+output: html_notebook
+---
+# Look at sensitivity, specificity, PPV, NPV for current thresholds (Temp 36-38)
+```{r}
+# =========================================================
+# 1) Helper: metrics for “outside [lower, upper] = positive”
+# =========================================================
+calc_range_metrics <- function(data, predictor, flag, lower, upper, label) {
+  data %>%
+    mutate(
+      test_pos = case_when(
+        is.na(.data[[predictor]]) ~ NA_integer_,
+        .data[[predictor]] < lower | .data[[predictor]] > upper ~ 1L,
+        .data[[predictor]] >= lower & .data[[predictor]] <= upper ~ 0L
+      )
+    ) %>%
+    summarise(
+      TP = sum(test_pos == 1 & .data[[flag]] == 1, na.rm = TRUE),
+      FP = sum(test_pos == 1 & .data[[flag]] == 0, na.rm = TRUE),
+      TN = sum(test_pos == 0 & .data[[flag]] == 0, na.rm = TRUE),
+      FN = sum(test_pos == 0 & .data[[flag]] == 1, na.rm = TRUE)
+    ) %>%
+    mutate(
+      sensitivity = TP / (TP + FN),
+      specificity = TN / (TN + FP),
+      ppv         = TP / (TP + FP),
+      npv         = TN / (TN + FN),
+      youden      = sensitivity + specificity - 1,
+      rule        = label,
+      lower       = lower,
+      upper       = upper
+    ) %>%
+    select(
+      rule, lower, upper,
+      TP, FP, TN, FN,
+      sensitivity, specificity, ppv, npv, youden
+    )
+}
+
+# =========================================
+# 2) Build one comparison table (Temp only)
+# =========================================
+temp_threshold_table <- dplyr::bind_rows(
+  calc_range_metrics(all_qualified, "temp_recorded", "ase_flag", 36, 38,
+                     label = "Current (36–38)"),
+  calc_range_metrics(all_qualified, "temp_recorded", "ase_flag",
+                     temp_lower_youden, temp_upper_youden,
+                     label = "Youden"),
+  calc_range_metrics(all_qualified, "temp_recorded", "ase_flag",
+                     temp_lower_or, temp_upper_or,
+                     label = "OR-based"),
+  calc_range_metrics(all_qualified, "temp_recorded", "ase_flag",
+                     temp_lower_histogram, temp_upper_histogram,
+                     label = "Histogram")
+) %>%
+  mutate(
+    across(c(lower, upper), ~ round(.x, 2)),
+    across(c(sensitivity, specificity, ppv, npv, youden), ~ round(.x, 3))
+  ) %>%
+  arrange(factor(
+    rule,
+    levels = c("Current (36–38)", "Youden", "OR-based", "Histogram")
+  ))
+
+temp_threshold_table
+```
+# Save Temp Table
+```{r}
+write.csv(
+  temp_threshold_table,
+  file = file.path(config$output_path, 
+                   "outputs",
+                   paste0(config$site_name,
+                          "_temp_threshold_metrics_",
+                          Sys.Date(), ".csv")),
+  row.names = FALSE
+)
+
+```
+
+
+# Look at sensitivity, specificity, PPV, NPV for current thresholds (WBC 4-12)
+```{r}
+# =========================================================
+# 1) Helper: metrics for “outside [lower, upper] = positive”
+# =========================================================
+calc_range_metrics <- function(data, predictor, flag, lower, upper, label) {
+  data %>%
+    mutate(
+      test_pos = case_when(
+        is.na(.data[[predictor]]) ~ NA_integer_,
+        .data[[predictor]] < lower | .data[[predictor]] > upper ~ 1L,
+        .data[[predictor]] >= lower & .data[[predictor]] <= upper ~ 0L
+      )
+    ) %>%
+    summarise(
+      TP = sum(test_pos == 1 & .data[[flag]] == 1, na.rm = TRUE),
+      FP = sum(test_pos == 1 & .data[[flag]] == 0, na.rm = TRUE),
+      TN = sum(test_pos == 0 & .data[[flag]] == 0, na.rm = TRUE),
+      FN = sum(test_pos == 0 & .data[[flag]] == 1, na.rm = TRUE)
+    ) %>%
+    mutate(
+      sensitivity = TP / (TP + FN),
+      specificity = TN / (TN + FP),
+      ppv         = TP / (TP + FP),
+      npv         = TN / (TN + FN),
+      youden      = sensitivity + specificity - 1,
+      rule        = label,
+      lower       = lower,
+      upper       = upper
+    ) %>%
+    select(
+      rule, lower, upper,
+      TP, FP, TN, FN,
+      sensitivity, specificity, ppv, npv, youden
+    )
+}
+
+# =========================================
+# 2) Build one comparison table (WBC only)
+# =========================================
+wbc_threshold_table <- dplyr::bind_rows(
+  calc_range_metrics(all_qualified, "wbc_recorded", "ase_flag", 4, 12,
+                     label = "Current (4-12)"),
+  calc_range_metrics(all_qualified, "wbc_recorded", "ase_flag",
+                     wbc_lower_youden, wbc_upper_youden,
+                     label = "Youden"),
+  calc_range_metrics(all_qualified, "wbc_recorded", "ase_flag",
+                     wbc_lower_or, wbc_upper_or,
+                     label = "OR-based"),
+  calc_range_metrics(all_qualified, "wbc_recorded", "ase_flag",
+                     wbc_lower_histogram, wbc_upper_histogram,
+                     label = "Histogram")
+) %>%
+  mutate(
+    across(c(lower, upper), ~ round(.x, 2)),
+    across(c(sensitivity, specificity, ppv, npv, youden), ~ round(.x, 3))
+  ) %>%
+  arrange(factor(
+    rule,
+    levels = c("Current (4-12)", "Youden", "OR-based", "Histogram")
+  ))
+
+wbc_threshold_table
+
+```
+
+# Save WBC Table
+```{r}
+write.csv(
+  wbc_threshold_table,
+  file = file.path(config$output_path, 
+                   "outputs",
+                   paste0(config$site_name,
+                          "_wbc_threshold_metrics_",
+                          Sys.Date(), ".csv")),
+  row.names = FALSE
+)
+
+```
+
+

@@ -214,14 +214,14 @@ all_blood_cultures <- all_blood_cultures %>%
 ```{r}
 qualifying_antibiotic_days <- open_dataset(file.path(config$tables_path, "clif_medication_admin_intermittent.parquet")) %>%
   filter(med_group == "CMS_sepsis_qualifying_antibiotics") %>%
-  select(hospitalization_id, med_group, med_name, admin_dttm) %>%
+  select(hospitalization_id, med_group, med_name, admin_dttm, med_route_category) %>%
   collect() 
-qualifying_antibiotic_days$admin_dttm <- ymd_hms(
-  qualifying_antibiotic_days$admin_dttm,
-  tz = "UTC"
-)
 
 qualifying_antibiotic_days <- qualifying_antibiotic_days %>%
+    mutate(
+    med_route_category_std = toupper(trimws(med_route_category)),
+    route_iv_im = med_route_category_std %in% c("IV", "IM")
+  ) %>%
   left_join(
     all_blood_cultures %>% select(hospitalization_id, blood_culture_order_time, admission_dttm), by = "hospitalization_id", relationship = "many-to-many") %>%
   mutate(
@@ -230,28 +230,56 @@ qualifying_antibiotic_days <- qualifying_antibiotic_days %>%
     # Define relative days based on hour difference
     day = floor(hour_diff/24))%>%
   arrange(hospitalization_id, blood_culture_order_time, hour_diff, day, admission_dttm, admin_dttm) %>%
-  select(hospitalization_id, blood_culture_order_time, admin_dttm, day, admission_dttm) %>%
+  select(hospitalization_id, blood_culture_order_time, admin_dttm, day, admission_dttm, route_iv_im, med_name) %>%
   filter(day >= -2 & day <= 6) 
 
+# Need 4 QAD (consecutive) with at least one IM/IV med admin. Exception: 1 day gap between same antibiotic admin should count as a QAD (must be SAME antibiotic to count)
 total_QAD_df <- qualifying_antibiotic_days %>%
-  distinct(hospitalization_id, day) %>%
+  # First, for each antibiotic, find consecutive runs allowing 1-day gaps
+  group_by(hospitalization_id, med_name, day) %>%
+  summarise(route_iv_im = any(route_iv_im), .groups = "drop") %>%
+  arrange(hospitalization_id, med_name, day) %>%
+  group_by(hospitalization_id, med_name) %>%
+  mutate(
+    diff_day = day - lag(day, default = first(day) - 1),
+    group_consec = cumsum(diff_day > 2)
+  ) %>%
+  mutate(antibiotic_run_id = paste(hospitalization_id, med_name, group_consec, sep = "_")) %>%
+  ungroup() %>%
+  # Now collapse to unique days
+  group_by(hospitalization_id, day) %>%
+  summarise(
+    route_iv_im = any(route_iv_im),
+    antibiotic_runs = list(unique(antibiotic_run_id)),
+    .groups = "drop"
+  ) %>%
   arrange(hospitalization_id, day) %>%
   group_by(hospitalization_id) %>%
   mutate(
     diff_day = day - lag(day, default = first(day) - 1),
-    group_consec = cumsum(diff_day != 1)
+    continues_run = if_else(
+      row_number() == 1,
+      FALSE,
+      diff_day <= 2 & any(unlist(antibiotic_runs) %in% unlist(lag(antibiotic_runs)))
+    ),
+    group_consec = cumsum(!continues_run)
   ) %>%
   group_by(hospitalization_id, group_consec) %>%
   summarise(
-    run_length = n(),              # number of days in this run
-    end_day    = max(day),         # last day of this run
+    run_length = n(),
+    start_day = min(day),  # Track when the run starts
+    end_day = max(day),
+    has_iv_im = any(route_iv_im),
     .groups = "drop_last"
   ) %>%
+  # Filter: must have IV/IM AND start within [-2, 2] day window
+  filter(has_iv_im & start_day >= -2 & start_day <= 2) %>%
   group_by(hospitalization_id) %>%
-  arrange(desc(run_length), end_day) %>%   # order by longest run, then later end day
-  slice(1) %>%                             # keep the "best" run
+  arrange(desc(run_length), end_day) %>%
+  slice(1) %>%
   ungroup() %>%
-  rename(total_QAD = run_length)%>%
+  rename(total_QAD = run_length) %>%
+  select(-start_day) %>%  # Remove - don't need it downstream
   collect()
 
 
@@ -323,9 +351,67 @@ long_sepsis_vasoactives <- long_sepsis_vasoactives %>%
   collect()
 ```
 
+#### Step 1.5: Joining with ADT table to add location (purpose = exclude OR)
+```{r}
+
+hosp_ids <- unique(long_sepsis_vasoactives$hospitalization_id)
+
+adt_relevant <- open_dataset(file.path(config$tables_path, "clif_adt.parquet")) %>%
+  filter(hospitalization_id %in% hosp_ids) %>%
+  select(hospitalization_id, in_dttm, out_dttm, location_category) %>%
+  collect() %>%
+  mutate(
+    in_dttm  = as.POSIXct(in_dttm,  tz = "UTC"),
+    out_dttm = as.POSIXct(out_dttm, tz = "UTC")
+  )
+
+# Make sure vaso times are the same class/tz as ADT
+vaso_dt <- long_sepsis_vasoactives %>%
+  mutate(
+    time = as.POSIXct(time, tz = "UTC")
+  ) %>%
+  # add a row id so we can de-duplicate after interval matching
+  mutate(vaso_row_id = row_number())
+
+# ---- Interval match: find ADT rows where time is between in_dttm and out_dttm ----
+setDT(vaso_dt)
+setDT(adt_relevant)
+
+# non-equi join: match if in_dttm <= time <= out_dttm within same hospitalization
+matches <- adt_relevant[
+  vaso_dt,
+  on = .(hospitalization_id, in_dttm <= time, out_dttm >= time),
+  nomatch = 0L,
+  allow.cartesian = TRUE
+]
+
+# Flag administrations that occurred in OR/procedure locations
+# safest exact match (handles NA cleanly)
+matches[, in_or_proc := !is.na(location_category) & location_category == "procedural"]
+
+vaso_or_flag <- matches[in_or_proc == TRUE, .(vaso_row_id)] %>%
+  distinct()
+
+# ---- Exclude OR/procedure administrations ----
+long_sepsis_vasoactives_no_or <- as.data.frame(vaso_dt) %>%
+  left_join(vaso_or_flag %>% mutate(exclude_or_proc = 1L), by = "vaso_row_id") %>%
+  mutate(exclude_or_proc = tidyr::replace_na(exclude_or_proc, 0L)) %>%
+  filter(exclude_or_proc == 0L) %>%
+  select(-vaso_row_id, -exclude_or_proc)
+
+# (Optional) keep what you excluded for QA
+long_sepsis_vasoactives_excluded_or <- as.data.frame(vaso_dt) %>%
+  left_join(vaso_or_flag %>% mutate(exclude_or_proc = 1L), by = "vaso_row_id") %>%
+  mutate(exclude_or_proc = tidyr::replace_na(exclude_or_proc, 0L)) %>%
+  filter(exclude_or_proc == 1L) %>%
+  select(-vaso_row_id)
+
+```
+
+
 #### Step 2: Join with presumed infection data and perform date arithmetic
 ```{r}
-long_sepsis_vasoactives <- long_sepsis_vasoactives %>%
+long_sepsis_vasoactives <- long_sepsis_vasoactives_no_or %>%
   left_join(presumed_infection %>% select(hospitalization_id, presumed_infection_dttm = time, admission_dttm), 
             by = "hospitalization_id", relationship = "many-to-many") %>%
   mutate(qualifying_vasoactive_start = ifelse(
@@ -386,9 +472,39 @@ long_sepsis_labs <- open_dataset(file.path(config$tables_path, "clif_labs.parque
 
 ```
 
+### ESRD Filtering
+```{r}
+hosp_ids_esrd <- unique(long_sepsis_labs$hospitalization_id)
+
+hosp_dx_relevant <- open_dataset(file.path(config$tables_path, "clif_hospital_diagnosis.parquet")) %>% 
+  filter(hospitalization_id %in% hosp_ids_esrd) %>% 
+  select(hospitalization_id, diagnosis_code, diagnosis_code_format, poa_present) %>% 
+  filter(diagnosis_code_format == "ICD10CM") %>%
+  collect() %>% 
+  filter(poa_present == "1") %>% 
+  collect()
+
+hosp_dx_relevant <- hosp_dx_relevant %>% 
+  filter(diagnosis_code %in% c(
+    "N18.6",
+    "Z49.31",
+    "Z49.01",
+    "I12.0",
+    "I13.11",
+    "I13.2",
+    "I27.2"
+  )) %>% 
+  distinct(hospitalization_id)
+
+long_sepsis_labs_cr <- long_sepsis_labs %>%
+  filter(!hospitalization_id %in% hosp_dx_relevant$hospitalization_id)
+
+```
+
+
 #### --- Determine baselines --- 
 ```{r}
-baseline_creatinine <- long_sepsis_labs %>%
+baseline_creatinine <- long_sepsis_labs_cr %>% #now only looking for non-ESRD hospitalization_ids for creatinine
   filter(lab_category == "creatinine") %>%
   filter(lab_value_numeric <= 20) %>% #outlier handling
   group_by(hospitalization_id) %>%
@@ -408,7 +524,7 @@ baseline_platelet <- long_sepsis_labs %>%
   filter(lab_category == "platelet_count") %>%
   filter(lab_value_numeric <= 2000) %>% #outlier handling
   group_by(hospitalization_id) %>%
-  arrange(time) %>%
+  slice_max(lab_value_numeric, with_ties = FALSE) %>%
   filter(row_number() == 1) %>%
   select(hospitalization_id, baseline_platelet_count = lab_value_numeric) %>%
   filter(baseline_platelet_count >= 100)
@@ -565,6 +681,12 @@ master_list <- all_qualified %>%
   inner_join(presumed_infection_cases %>% select(hospitalization_id, presumed_flag), by ="hospitalization_id") %>%
   select(hospitalization_id, age_at_admission, admission_dttm, wbc_recorded, temp_recorded, ase_flag, presumed_flag)
 
+```
+
+# Update master list with temp limited to .X
+```{r}
+master_list <- master_list %>% 
+  mutate(temp_recorded = round(temp_recorded, 1))
 ```
 
 

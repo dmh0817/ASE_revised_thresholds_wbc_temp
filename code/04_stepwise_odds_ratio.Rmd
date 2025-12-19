@@ -30,23 +30,23 @@ calc_or_temp <- function(cut, direction = c("forward","reverse"), flag_var = "as
     dir_label <- "Forward (>cut vs 36–cut)"
     
   } else {
-    # Exposed = <cut ; Reference = cut–37
+    # Exposed = <cut ; Reference = cut–38
     data_cut <- master_list %>%
       mutate(group = case_when(
         temp_recorded < cut ~ paste0("<", cut),
-        temp_recorded >= cut & temp_recorded <= 37 ~ paste0(cut, "-37"),
+        temp_recorded >= cut & temp_recorded <= 38 ~ paste0(cut, "-38"),
         TRUE ~ NA_character_
       )) %>%
       filter(!is.na(group), .data[[flag_var]] %in% c(0,1))
     
     tab <- table(
-      factor(data_cut$group, levels = c(paste0("<", cut), paste0(cut, "-37"))),
+      factor(data_cut$group, levels = c(paste0("<", cut), paste0(cut, "-38"))),
       factor(data_cut[[flag_var]], levels = c(0,1))
     )
     
     exp_label <- paste0("<", cut)
-    ref_label <- paste0(cut, "-37")
-    dir_label <- "Reverse (<cut vs cut–37)"
+    ref_label <- paste0(cut, "-38")
+    dir_label <- "Reverse (<cut vs cut–38)"
   }
   
   # ---- 2x2 OR calculation ----
@@ -89,7 +89,7 @@ or_all <- bind_rows(
 # ---- Split for temp ----
 ```{r}
 or_forward_temp <- or_all %>% filter(direction == "Forward (>cut vs 36–cut)")
-or_reverse_temp <- or_all %>% filter(direction == "Reverse (<cut vs cut–37)")
+or_reverse_temp <- or_all %>% filter(direction == "Reverse (<cut vs cut–38)")
 
 ```
 
@@ -137,7 +137,7 @@ p_rev_temp <- ggplot(or_reverse_temp, aes(x = cutoff, y = OR)) +
   ) +
   theme_minimal()
 
-# (<cut vs cut–37)
+# (<cut vs cut–38)
 ```
 
 # ---- Combine for TEMP ----
@@ -145,6 +145,93 @@ p_rev_temp <- ggplot(or_reverse_temp, aes(x = cutoff, y = OR)) +
 p_comb_temp <- p_rev_temp + p_fwd_temp
 print(p_comb_temp)
 ```
+
+# Saving variables:
+```{r}
+target_or <- 3
+
+get_crossing_ci_low <- function(df, direction_label, target_or = 3) {
+
+  # Always return a tibble, even if df is empty / missing columns
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0 ||
+      !all(c("cutoff", "CI_low") %in% names(df))) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  df2 <- df |>
+    dplyr::filter(!is.na(.data$cutoff), !is.na(.data$CI_low))
+
+  if (nrow(df2) == 0) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  # Match your plotted traversal:
+  # Forward: 37 -> 39 (increasing)
+  # Reverse: 37 -> 35 (decreasing)
+  if (grepl("^Reverse", direction_label)) {
+    df2 <- df2 |> dplyr::arrange(dplyr::desc(.data$cutoff))
+  } else {
+    df2 <- df2 |> dplyr::arrange(.data$cutoff)
+  }
+
+  hit_idx <- which(df2$CI_low >= target_or)[1]
+
+  if (is.na(hit_idx)) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  cutoff_step <- df2$cutoff[hit_idx]
+
+  # Optional interpolation (log-scale) between the bracketing points
+  cutoff_interp <- NA_real_
+  if (hit_idx > 1) {
+    x0 <- df2$cutoff[hit_idx - 1]; y0 <- df2$CI_low[hit_idx - 1]
+    x1 <- df2$cutoff[hit_idx];     y1 <- df2$CI_low[hit_idx]
+
+    if (!is.na(y0) && !is.na(y1) &&
+        y0 > 0 && y1 > 0 &&
+        (y0 < target_or) && (y1 >= target_or)) {
+      cutoff_interp <- x0 + (x1 - x0) * ((log(target_or) - log(y0)) / (log(y1) - log(y0)))
+    }
+  }
+
+  tibble::tibble(
+    direction = direction_label,
+    cutoff_step = cutoff_step,
+    cutoff_interp = cutoff_interp
+  )
+}
+
+temp_or3_thresholds <- dplyr::bind_rows(list(
+  get_crossing_ci_low(or_reverse_temp, "Reverse (<cut vs cut–38)", target_or),
+  get_crossing_ci_low(or_forward_temp, "Forward (>cut vs 36–cut)", target_or)
+))
+
+temp_or3_thresholds
+
+```
+# ================================================================
+# ------------------ Store best TEMP thresholds ------------------
+# ================================================================
+```{r}
+temp_lower_or <- temp_or3_thresholds$cutoff_step[1]
+temp_upper_or <- temp_or3_thresholds$cutoff_step[2]
+
+
+```
+
 
 # Save Output - TEMPERATURE
 ```{r}
@@ -301,6 +388,93 @@ p_rev_wbc <- ggplot(or_reverse_wbc, aes(x = cutoff, y = OR)) +
 p_comb_wbc <- p_rev_wbc + p_fwd_wbc
 print(p_comb_wbc)
 ```
+
+# Saving variables:
+```{r}
+target_or <- 3
+
+get_crossing_ci_low <- function(df, direction_label, target_or = 3) {
+
+  # Always return a tibble, even if df is empty / missing columns
+  if (is.null(df) || !is.data.frame(df) || nrow(df) == 0 ||
+      !all(c("cutoff", "CI_low") %in% names(df))) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  df2 <- df |>
+    dplyr::filter(!is.na(.data$cutoff), !is.na(.data$CI_low))
+
+  if (nrow(df2) == 0) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  # Match your plotted traversal:
+  # Forward: 37 -> 39 (increasing)
+  # Reverse: 37 -> 35 (decreasing)
+  if (grepl("^Reverse", direction_label)) {
+    df2 <- df2 |> dplyr::arrange(dplyr::desc(.data$cutoff))
+  } else {
+    df2 <- df2 |> dplyr::arrange(.data$cutoff)
+  }
+
+  hit_idx <- which(df2$CI_low >= target_or)[1]
+
+  if (is.na(hit_idx)) {
+    return(tibble::tibble(
+      direction = direction_label,
+      cutoff_step = NA_real_,
+      cutoff_interp = NA_real_
+    ))
+  }
+
+  cutoff_step <- df2$cutoff[hit_idx]
+
+  # Optional interpolation (log-scale) between the bracketing points
+  cutoff_interp <- NA_real_
+  if (hit_idx > 1) {
+    x0 <- df2$cutoff[hit_idx - 1]; y0 <- df2$CI_low[hit_idx - 1]
+    x1 <- df2$cutoff[hit_idx];     y1 <- df2$CI_low[hit_idx]
+
+    if (!is.na(y0) && !is.na(y1) &&
+        y0 > 0 && y1 > 0 &&
+        (y0 < target_or) && (y1 >= target_or)) {
+      cutoff_interp <- x0 + (x1 - x0) * ((log(target_or) - log(y0)) / (log(y1) - log(y0)))
+    }
+  }
+
+  tibble::tibble(
+    direction = direction_label,
+    cutoff_step = cutoff_step,
+    cutoff_interp = cutoff_interp
+  )
+}
+
+wbc_or3_thresholds <- dplyr::bind_rows(list(
+  get_crossing_ci_low(or_reverse_wbc, "Reverse (<cut vs cut–12)", target_or),
+  get_crossing_ci_low(or_forward_wbc, "Forward (>cut vs 4–cut)", target_or)
+))
+
+wbc_or3_thresholds
+
+```
+
+# ================================================================
+# ------------------ Store best WBC thresholds ------------------
+# ================================================================
+```{r}
+wbc_lower_or <- wbc_or3_thresholds$cutoff_step[1]
+wbc_upper_or <- wbc_or3_thresholds$cutoff_step[2]
+
+```
+
 
 # Save Output - WBC
 ```{r}

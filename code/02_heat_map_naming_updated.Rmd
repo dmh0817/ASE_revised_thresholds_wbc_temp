@@ -53,7 +53,7 @@ run_threshold_analysis <- function(data, predictor, flag,
                color = "black", size = 3, shape = 21, stroke = 1.2) +
     geom_text(data = best_y,
               aes(x = lower, y = upper,
-                  label = sprintf("Best: %.2f / %.2f\nYouden=%.3f",
+                  label = sprintf("Best: %.1f / %.1f\nYouden=%.3f",
                                   lower, upper, youden)),
               vjust = -1, color = "black", fontface = "bold") +
     scale_fill_viridis_c(option = "magma", na.value = "grey80") +
@@ -139,6 +139,20 @@ print(results_temp$plot_youden)
 
 ```
 
+# ================================================================
+# ------------------ Store best TEMP thresholds ------------------
+# ================================================================
+```{r}
+best_temp <- results_temp$top10_youden %>%
+  arrange(desc(youden)) %>%
+  slice(1)
+
+temp_lower_youden <- best_temp$lower
+temp_upper_youden <- best_temp$upper
+
+```
+
+
 # Save Output - TEMPERATURE
 ```{r}
 ggsave(
@@ -181,6 +195,19 @@ results_wbc <- run_threshold_analysis(
 print(results_wbc$plot_youden)
 
 ```
+
+# ================================================================
+# ------------------ Store best WBC thresholds ------------------
+# ================================================================
+```{r}
+best_wbc <- results_wbc$top10_youden %>%
+  arrange(desc(youden)) %>%
+  slice(1)
+
+wbc_lower_youden <- best_wbc$lower
+wbc_upper_youden <- best_wbc$upper
+```
+
 
 ## Save Output - WBC
 ```{r}

@@ -11,9 +11,9 @@ hospital_ds <- open_dataset(file.path(config$tables_path, "clif_hospitalization.
   collect()
 
 master_list_demos <- master_list %>% 
-  inner_join(hospital_ds %>% select(hospitalization_id, patient_id, discharge_dttm, discharge_category), by = "hospitalization_id") %>% 
+  left_join(hospital_ds %>% select(hospitalization_id, patient_id, discharge_dttm, discharge_category), by = "hospitalization_id") %>% 
   collect() %>% 
-  inner_join(patient_ds %>% select(patient_id, sex_category, race_category, ethnicity_category), by = "patient_id")
+  left_join(patient_ds %>% select(patient_id, sex_category, race_category, ethnicity_category), by = "patient_id")
 
 ```
 

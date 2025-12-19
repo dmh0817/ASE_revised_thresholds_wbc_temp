@@ -26,7 +26,7 @@ smart_load <- function(pkgs) {
 smart_load(c(
   "jsonlite", "arrow", "dplyr", "lubridate", "tidyr",
   "ggplot2", "patchwork", "rlang", "dcurves",
-  "gtsummary", "broom", "stringr", "purrr", "tidyverse"
+  "gtsummary", "broom", "stringr", "purrr", "tidyverse", "data.table"
 ))
 
 ```
