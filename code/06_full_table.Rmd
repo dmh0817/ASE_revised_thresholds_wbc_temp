@@ -52,11 +52,11 @@ master_list_sofa <- master_list %>%
 
 ## Coagulation - platelets
 ```{r}
-#* >= 150: 0
-#* < 150: 1
-#* < 100: 2
-#* < 50: 3
-#* < 20: 4
+#* > 150: 0
+#* <= 150: 1
+#* <= 100: 2
+#* <= 50: 3
+#* <= 20: 4
 
 platelets_sofa <- long_sofa_labs %>%
   filter(lab_category == "platelet_count") %>%
@@ -66,10 +66,10 @@ platelets_sofa <- long_sofa_labs %>%
   filter(platelet_dttm >= sofa_start & platelet_dttm <= sofa_end) %>%
   group_by(hospitalization_id) %>%
   mutate(platelet_sofa = case_when(
-    (lab_value_numeric < 20) ~ 4, 
-    (lab_value_numeric < 50) ~ 3,
-    (lab_value_numeric < 100) ~2, 
-    (lab_value_numeric < 150) ~1, 
+    (lab_value_numeric <= 20) ~ 4, 
+    (lab_value_numeric <= 50) ~ 3,
+    (lab_value_numeric <= 100) ~2, 
+    (lab_value_numeric <= 150) ~1, 
     TRUE ~ 0
   )) %>% 
   group_by(hospitalization_id) %>%
@@ -142,11 +142,11 @@ creatinine_sofa <- long_sofa_labs %>%
 
 # Respiration - PaO2/FiO2 ratio
 ```{r}
-##* >= 400: 0
-##* < 400: 1
-##* < 300: 2
-##* < 200 (with respiratory support): 3
-##* < 100 (with respiratory support): 4
+##* > 400: 0
+##* <= 400: 1
+##* <= 300: 2
+##* <= 200 (with respiratory support): 3
+##* <= 100 (with respiratory support): 4
 
 # Need ABG (labs table) for PaO2. Need FiO2 from respiratory table
 
@@ -182,10 +182,10 @@ pao2_fio2_sofa <- pao2_fio2 %>%
   inner_join(master_list_sofa %>% select(hospitalization_id, sofa_start, sofa_end), by = "hospitalization_id", relationship = "many-to-many") %>% 
   filter(ratio_dttm >= sofa_start & ratio_dttm <= sofa_end) %>%
   mutate(respiratory_sofa = case_when(
-    (ratio_value < 100 & device_category != "Room Air") ~ 4,
-    (ratio_value < 200 & device_category != "Room Air") ~3,
-    (ratio_value < 300) ~ 2,
-    (ratio_value < 400) ~ 1, 
+    (ratio_value <= 100 & device_category != "Room Air") ~ 4,
+    (ratio_value <= 200 & device_category != "Room Air") ~3,
+    (ratio_value <= 300) ~ 2,
+    (ratio_value <= 400) ~ 1, 
     TRUE ~ 0
   )) %>%
   group_by(hospitalization_id) %>%
@@ -344,7 +344,8 @@ data_t1 <- master_list_demos_LOS_sofa %>%
     -admission_dttm,
     -discharge_dttm,
     -presumed_flag,
-    -discharge_category
+    -discharge_category, 
+    -wbc_bin
   ) %>%
   relocate(sofa_score, .before = cardio_sofa) %>%
   mutate(
@@ -426,7 +427,7 @@ table1
 # Create CSV file path
 csv_path <- file.path(
   config$output_path, "outputs",
-  paste0(config$site_name, "_table1_", Sys.Date(), ".csv")
+  paste0(config$site_name, "_table1_corrected_", Sys.Date(), ".csv")
 )
 
 # Convert gtsummary table to CSV text and write it out
